@@ -1,0 +1,19 @@
+# Node dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables (do NOT upload secrets)
+.env
+
+# Prisma generated and database files
+prisma/dev.db
+prisma/dev.db-journal
+/generated/prisma/
+
+# Logs
+*.log
+
+# TypeScript build info
+tsconfig.tsbuildinfo
