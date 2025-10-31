@@ -1,29 +1,18 @@
 import { Router } from "express";
-import userController from "../controllers/userController";
 import { authMiddleware, AuthRequest } from "../middlewares/authMiddleware";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 const router = Router();
 
-// Rutas públicas (sin token)
-router.post("/register", userController.register);
-router.post("/login", userController.login);
-
-// Ruta protegida: obtener datos del usuario autenticado
 router.get("/me", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       select: { id: true, name: true, email: true, role: true },
     });
-
-    if (!user) {
-      return res.status(404).json({ error: "Usuario no encontrado" });
-    }
-
     res.json(user);
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Error al obtener el usuario" });
   }
 });

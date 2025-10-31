@@ -8,18 +8,28 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
 export const register = async (req: Request, res: Response) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
     const hashed = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { name, email, password: hashed },
+      data: { name, email, password: hashed, role: role || "recepcion" },
     });
 
-    res.json(user);
+    res.status(201).json({
+      message: "Usuario creado correctamente",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
   } catch (err) {
-    res.status(400).json({ error: "Error registering user" });
+    console.error(err);
+    res.status(400).json({ error: "Error al registrar usuario" });
   }
 };
+
 
 export const login = async (req: Request, res: Response) => {
   try {
