@@ -7,19 +7,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model User {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   name      String
-  email     String   @unique
+  email     String    @unique
   password  String
-  role      String   @default("recepcion")
-  createdAt DateTime @default(now())
+  role      String    @default("recepcion")
+  createdAt DateTime  @default(now())
   bookings  Booking[]
 }
 
 model RoomType {
-  id        Int      @id @default(autoincrement())
+  id        Int    @id @default(autoincrement())
   name      String
   basePrice Float
   capacity  Int
@@ -27,14 +26,14 @@ model RoomType {
 }
 
 model Room {
-  id          Int      @id @default(autoincrement())
-  number      String   @unique
+  id          Int       @id @default(autoincrement())
+  number      String    @unique
   floor       Int
-  status      String   @default("available")
+  status      String    @default("available")
   description String?
   roomTypeId  Int
-  roomType    RoomType @relation(fields: [roomTypeId], references: [id])
   bookings    Booking[]
+  roomType    RoomType  @relation(fields: [roomTypeId], references: [id])
 }
 
 model Booking {
@@ -45,7 +44,6 @@ model Booking {
   checkOut   DateTime
   totalPrice Float
   createdAt  DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-  room Room @relation(fields: [roomId], references: [id])
+  room       Room     @relation(fields: [roomId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
 }

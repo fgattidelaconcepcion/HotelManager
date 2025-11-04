@@ -2,15 +2,18 @@ import { Router } from "express";
 import userController from "../controllers/userController";
 import { authMiddleware, AuthRequest } from "../middlewares/authMiddleware";
 import { PrismaClient } from "@prisma/client";
+import roomsRoutes from "./rooms.routes";
+import bookingsRoutes from "./bookings.routes";
+import roomTypeRoutes from "./roomType.routes";
 
 const prisma = new PrismaClient();
 const router = Router();
 
-// Rutas públicas (sin token)
+// Rutas públicas
 router.post("/register", userController.register);
 router.post("/login", userController.login);
 
-// Ruta protegida: obtener datos del usuario autenticado
+//  Rutas protegidas
 router.get("/me", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({
@@ -28,4 +31,8 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+//  Subrutas principales
+router.use("/rooms", roomsRoutes);
+router.use("/bookings", bookingsRoutes);
+router.use("/room-types", roomTypeRoutes);
 export default router;
