@@ -4,7 +4,7 @@
   "description": "Backend para la app de gestión de habitaciones de hotel",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev": "ts-node-dev --respawn --transpile-only src/services/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "migrate": "npx dotenv-cli -- npx prisma migrate dev --name init --schema=prisma/schema.prisma",
