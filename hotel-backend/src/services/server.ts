@@ -4,7 +4,7 @@ dotenv.config();
 import app from "../app";
 import prisma from "../utils/prisma";
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8000; 
 
 async function startServer() {
   try {
@@ -25,7 +25,7 @@ async function startServer() {
 // Manejar cierre del servidor correctamente
 process.on("SIGINT", async () => {
   await prisma.$disconnect();
-  console.log("🔌 Conexión con Prisma cerrada");
+  console.log("Conexión con Prisma cerrada");
   process.exit(0);
 });
 

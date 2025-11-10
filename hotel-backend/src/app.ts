@@ -7,6 +7,7 @@ import morgan from "morgan";
 
 import router from "./routes/index";
 import userRoutes from "./routes/user.routes";
+import authRoutes from "./routes/auth.routes"; //  Importación agregada
 
 const app = express();
 
@@ -24,8 +25,9 @@ app.use((req, res, next) => {
 
 app.use(morgan("dev"));
 
-//  Rutas principales
-app.use("/api/users", userRoutes); // primero rutas de usuarios
-app.use("/api", router); // luego el resto de rutas (habitaciones, reservas, etc.)
+//   Rutas principales
+app.use("/api/auth", authRoutes); // ← agregado
+app.use("/api/users", userRoutes);
+app.use("/api", router);
 
 export default app;
