@@ -14,8 +14,7 @@ const app = express();
 //  Middlewares globales
 app.use(cors());
 
-//  Asegurar que Express procese y envíe JSON en UTF-8
-app.use(express.json({ limit: "10mb", type: "application/json; charset=utf-8" }));
+app.use(express.json({ limit: "10mb" }));
 
 //  Forzar todas las respuestas a usar UTF-8
 app.use((req, res, next) => {
