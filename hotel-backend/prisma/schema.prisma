@@ -33,7 +33,35 @@ model Room {
   description String?
   roomTypeId  Int
   bookings    Booking[]
+  reservations Reservation[]
   roomType    RoomType  @relation(fields: [roomTypeId], references: [id])
+}
+
+model Guest {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations Reservation[]
+}
+
+
+model Reservation {
+  id          Int      @id @default(autoincrement())
+  roomId      Int
+  guestId     Int
+  checkIn     DateTime
+  checkOut    DateTime
+  totalPrice  Float
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  room        Room     @relation(fields: [roomId], references: [id])
+  guest       Guest    @relation(fields: [guestId], references: [id])
 }
 
 model Booking {
@@ -44,6 +72,7 @@ model Booking {
   checkOut   DateTime
   totalPrice Float
   createdAt  DateTime @default(now())
+
   room       Room     @relation(fields: [roomId], references: [id])
   user       User     @relation(fields: [userId], references: [id])
 }

@@ -23,10 +23,8 @@ export const getAvailableRooms = async (req: Request, res: Response) => {
     const checkInDate = new Date(checkIn as string);
     const checkOutDate = new Date(checkOut as string);
 
-    // Buscar habitaciones que NO tengan reservas que se crucen
     const availableRooms = await prisma.room.findMany({
       where: {
-        // Solo habitaciones que no tengan reservas solapadas
         bookings: {
           none: {
             AND: [
@@ -51,12 +49,26 @@ export const getAvailableRooms = async (req: Request, res: Response) => {
 
 export const createRoom = async (req: Request, res: Response) => {
   try {
-    const { number, floor, roomTypeId, description } = req.body;
+    console.log(" Datos recibidos en /api/rooms:", req.body); 
+
+    const { number, roomTypeId, status, description } = req.body;
+
+    if (!number || !roomTypeId) {
+      return res.status(400).json({ error: "Número y tipo son requeridos" });
+    }
+
     const room = await prisma.room.create({
-      data: { number, floor, roomTypeId, description },
+      data: {
+        number,
+        roomTypeId: parseInt(roomTypeId),
+        status: status || "disponible",
+        description,
+      },
     });
+
     res.json(room);
   } catch (err) {
-    res.status(400).json({ error: "Error creating room" });
+    console.error(" Error creando habitación:", err);
+    res.status(400).json({ error: "Error creando habitación" });
   }
 };

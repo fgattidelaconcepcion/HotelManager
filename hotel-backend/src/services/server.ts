@@ -1,10 +1,14 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import app from "../app";
+import app from "../app"; 
 import prisma from "../utils/prisma";
+import guestRoutes from "../routes/guest.routes";
 
-const PORT = process.env.PORT || 8000; 
+// Middlewares y rutas
+app.use("/api/guests", guestRoutes);
+
+const PORT = process.env.PORT || 8000;
 
 async function startServer() {
   try {
@@ -25,7 +29,7 @@ async function startServer() {
 // Manejar cierre del servidor correctamente
 process.on("SIGINT", async () => {
   await prisma.$disconnect();
-  console.log("Conexión con Prisma cerrada");
+  console.log("🔌 Conexión con Prisma cerrada");
   process.exit(0);
 });
 

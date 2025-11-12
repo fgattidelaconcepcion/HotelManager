@@ -1,59 +1,72 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import api from "../api/api";
+
+interface RoomType {
+  id: number;
+  name: string;
+  basePrice: number;
+}
 
 interface Room {
   id: number;
   number: string;
-  roomType: {
-    name: string;
-    basePrice: number;
-  };
+  floor: number;
   status: string;
   description: string;
+  roomType: RoomType;
 }
 
 export default function Rooms() {
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [newRoom, setNewRoom] = useState({
     number: "",
-    type: "",
-    basePrice: "",
+    floor: "",
+    roomTypeId: "",
     status: "",
     description: "",
   });
 
   const fetchRooms = async () => {
-    const response = await axios.get("http://localhost:8000/api/rooms");
-    setRooms(response.data);
+    try {
+      const response = await api.get("/rooms");
+      setRooms(response.data);
+    } catch (error) {
+      console.error("Error fetching rooms:", error);
+    }
+  };
+
+  const fetchRoomTypes = async () => {
+    try {
+      const response = await api.get("/room-types");
+      setRoomTypes(response.data);
+    } catch (error) {
+      console.error("Error fetching room types:", error);
+    }
   };
 
   useEffect(() => {
     fetchRooms();
+    fetchRoomTypes();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post("http://localhost:8000/api/rooms", {
+      await api.post("/rooms", {
         number: newRoom.number,
-        type: newRoom.type,
-        basePrice: parseFloat(newRoom.basePrice),
+        floor: parseInt(newRoom.floor),
+        roomTypeId: parseInt(newRoom.roomTypeId),
         status: newRoom.status,
         description: newRoom.description,
       });
       setShowModal(false);
-      setNewRoom({
-        number: "",
-        type: "",
-        basePrice: "",
-        status: "",
-        description: "",
-      });
+      setNewRoom({ number: "", floor: "", roomTypeId: "", status: "", description: "" });
       fetchRooms();
     } catch (error) {
       console.error("Error adding room:", error);
-      alert("Error adding room");
+      alert("Error al agregar la habitación");
     }
   };
 
@@ -65,7 +78,7 @@ export default function Rooms() {
           onClick={() => setShowModal(true)}
           className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white"
         >
-          ➕ Add Room
+          ➕ Agregar habitación
         </button>
       </div>
 
@@ -73,6 +86,7 @@ export default function Rooms() {
         <thead>
           <tr>
             <th className="p-2 text-left">Número</th>
+            <th className="p-2 text-left">Piso</th>
             <th className="p-2 text-left">Tipo</th>
             <th className="p-2 text-left">Precio base</th>
             <th className="p-2 text-left">Estado</th>
@@ -83,6 +97,7 @@ export default function Rooms() {
           {rooms.map((room) => (
             <tr key={room.id} className="border-t border-gray-700">
               <td className="p-2">{room.number}</td>
+              <td className="p-2">{room.floor}</td>
               <td className="p-2">{room.roomType?.name}</td>
               <td className="p-2">${room.roomType?.basePrice}</td>
               <td className="p-2 capitalize">{room.status}</td>
@@ -96,46 +111,55 @@ export default function Rooms() {
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
           <div className="bg-gray-900 p-6 rounded-lg w-96">
-            <h2 className="text-xl font-semibold mb-4">Add New Room</h2>
+            <h2 className="text-xl font-semibold mb-4">Nueva habitación</h2>
             <form onSubmit={handleSubmit} className="space-y-3">
               <input
                 type="text"
-                placeholder="Room number"
+                placeholder="Número"
                 className="w-full p-2 rounded bg-gray-800 border border-gray-700"
                 value={newRoom.number}
                 onChange={(e) =>
                   setNewRoom({ ...newRoom, number: e.target.value })
                 }
               />
-              <input
-                type="text"
-                placeholder="Type"
-                className="w-full p-2 rounded bg-gray-800 border border-gray-700"
-                value={newRoom.type}
-                onChange={(e) =>
-                  setNewRoom({ ...newRoom, type: e.target.value })
-                }
-              />
+
               <input
                 type="number"
-                placeholder="Base price"
+                placeholder="Piso"
                 className="w-full p-2 rounded bg-gray-800 border border-gray-700"
-                value={newRoom.basePrice}
+                value={newRoom.floor}
                 onChange={(e) =>
-                  setNewRoom({ ...newRoom, basePrice: e.target.value })
+                  setNewRoom({ ...newRoom, floor: e.target.value })
                 }
               />
+
+              <select
+                className="w-full p-2 rounded bg-gray-800 border border-gray-700"
+                value={newRoom.roomTypeId}
+                onChange={(e) =>
+                  setNewRoom({ ...newRoom, roomTypeId: e.target.value })
+                }
+              >
+                <option value="">Selecciona tipo</option>
+                {roomTypes.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name} (${type.basePrice})
+                  </option>
+                ))}
+              </select>
+
               <input
                 type="text"
-                placeholder="Status"
+                placeholder="Estado (ej: disponible)"
                 className="w-full p-2 rounded bg-gray-800 border border-gray-700"
                 value={newRoom.status}
                 onChange={(e) =>
                   setNewRoom({ ...newRoom, status: e.target.value })
                 }
               />
+
               <textarea
-                placeholder="Description"
+                placeholder="Descripción"
                 className="w-full p-2 rounded bg-gray-800 border border-gray-700"
                 value={newRoom.description}
                 onChange={(e) =>
@@ -149,13 +173,13 @@ export default function Rooms() {
                   onClick={() => setShowModal(false)}
                   className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg"
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   type="submit"
                   className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg"
                 >
-                  Save
+                  Guardar
                 </button>
               </div>
             </form>
