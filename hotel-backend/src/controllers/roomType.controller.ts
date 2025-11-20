@@ -1,38 +1,73 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../services/prisma";
+import { z } from "zod";
 
-const prisma = new PrismaClient();
+// 
+//   VALIDACIÓN ZOD
+// 
+const createRoomTypeSchema = z.object({
+  name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
+  basePrice: z.preprocess((v) => Number(v), z.number().positive()),
+  capacity: z.preprocess((v) => Number(v), z.number().int().positive()),
+});
 
-export const getRoomTypes = async (_req: Request, res: Response): Promise<void> => {
+// 
+//   CONTROLADORES
+// 
+
+export const getRoomTypes = async (_req: Request, res: Response) => {
   try {
-    const types = await prisma.roomType.findMany();
-    res.json(types);
+    const types = await prisma.roomType.findMany({
+      orderBy: { id: "asc" },
+    });
+
+    return res.status(200).json({ success: true, types });
   } catch (error) {
-    console.error("Error fetching room types:", error);
-    res.status(500).json({ error: "Error fetching room types" });
+    console.error(" Error obteniendo room types:", error);
+
+    return res
+      .status(500)
+      .json({ success: false, error: "Error al obtener room types" });
   }
 };
 
-export const createRoomType = async (req: Request, res: Response): Promise<void> => {
+export const createRoomType = async (req: Request, res: Response) => {
   try {
-    const { name, basePrice, capacity } = req.body;
+    const parsed = createRoomTypeSchema.safeParse(req.body);
 
-    if (!name || !basePrice || !capacity) {
-      res.status(400).json({ error: "Missing required fields" });
-      return;
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Datos inválidos",
+        errors: parsed.error.flatten().fieldErrors,
+      });
     }
 
+    const { name, basePrice, capacity } = parsed.data;
+
+    // Crear tipo de habitación
     const newType = await prisma.roomType.create({
-      data: {
-        name,
-        basePrice: parseFloat(basePrice),
-        capacity: parseInt(capacity),
-      },
+      data: { name, basePrice, capacity },
     });
 
-    res.json(newType);
-  } catch (error) {
-    console.error("Error creating room type:", error);
-    res.status(400).json({ error: "Error creating room type" });
+    return res.status(201).json({
+      success: true,
+      message: "Tipo de habitación creado correctamente",
+      roomType: newType,
+    });
+  } catch (error: any) {
+    console.error(" Error creando room type:", error);
+
+    // Error por duplicado (si usás un índice único)
+    if (error.code === "P2002") {
+      return res.status(400).json({
+        success: false,
+        error: "El nombre del tipo ya existe",
+      });
+    }
+
+    return res
+      .status(500)
+      .json({ success: false, error: "Error al crear room type" });
   }
 };

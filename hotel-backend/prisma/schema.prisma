@@ -7,72 +7,100 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/**
+ * ============================
+ * MODELO USER
+ * ============================
+ */
+
 model User {
-  id        Int       @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   name      String
-  email     String    @unique
+  email     String   @unique
   password  String
-  role      String    @default("recepcion")
-  createdAt DateTime  @default(now())
-  bookings  Booking[]
+  role      String   @default("recepcion")
+  createdAt DateTime @default(now())
+
+  bookings Booking[]
 }
+
+/**
+ * ============================
+ * MODELO ROOM TYPE
+ * ============================
+ */
 
 model RoomType {
   id        Int    @id @default(autoincrement())
   name      String
   basePrice Float
   capacity  Int
-  rooms     Room[]
+
+  rooms Room[]
 }
 
+/**
+ * ============================
+ * MODELO ROOM
+ * ============================
+ */
+
 model Room {
-  id          Int       @id @default(autoincrement())
-  number      String    @unique
+  id          Int     @id @default(autoincrement())
+  number      String  @unique
   floor       Int
-  status      String    @default("available")
+  status      String  @default("disponible") // coherente con tu backend
   description String?
   roomTypeId  Int
-  bookings    Booking[]
-  reservations Reservation[]
-  roomType    RoomType  @relation(fields: [roomTypeId], references: [id])
+
+  roomType RoomType  @relation(fields: [roomTypeId], references: [id])
+  bookings Booking[]
 }
+
+/**
+ * ============================
+ * MODELO GUEST
+ * ============================
+ */
 
 model Guest {
   id        Int      @id @default(autoincrement())
   name      String
-  email     String   @unique
+  email     String?  @unique
   phone     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  reservations Reservation[]
+  bookings Booking[]
 }
 
+/**
+ * ============================
+ * MODELO BOOKING
+ * ============================
+ */
 
-model Reservation {
-  id          Int      @id @default(autoincrement())
-  roomId      Int
-  guestId     Int
-  checkIn     DateTime
-  checkOut    DateTime
-  totalPrice  Float
-  status      String   @default("pending")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  room        Room     @relation(fields: [roomId], references: [id])
-  guest       Guest    @relation(fields: [guestId], references: [id])
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+  checked_in
+  checked_out
 }
 
 model Booking {
   id         Int      @id @default(autoincrement())
-  userId     Int
+  userId     Int?
+  guestId    Int?
   roomId     Int
   checkIn    DateTime
   checkOut   DateTime
   totalPrice Float
-  createdAt  DateTime @default(now())
 
-  room       Room     @relation(fields: [roomId], references: [id])
-  user       User     @relation(fields: [userId], references: [id])
+  status    BookingStatus @default(pending)
+  createdAt DateTime      @default(now())
+
+  room  Room   @relation(fields: [roomId], references: [id])
+  user  User?  @relation(fields: [userId], references: [id])
+  guest Guest? @relation(fields: [guestId], references: [id])
 }

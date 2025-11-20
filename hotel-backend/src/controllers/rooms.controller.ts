@@ -1,28 +1,59 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../services/prisma";
+import { z } from "zod";
 
-const prisma = new PrismaClient();
+/* 
+        VALIDACIÓN ZOD
+ */
 
-export const getAllRooms = async (_: Request, res: Response) => {
+const createRoomSchema = z.object({
+  number: z.string().min(1, "El número es requerido"),
+  floor: z.preprocess((v) => Number(v), z.number().int().nonnegative()),
+  roomTypeId: z.preprocess((v) => Number(v), z.number().int().positive()),
+  status: z.enum(["disponible", "ocupado", "mantenimiento"]).optional(),
+  description: z.string().optional(),
+});
+
+const updateRoomSchema = z.object({
+  number: z.string().optional(),
+  floor: z.preprocess((v) => Number(v), z.number().int()).optional(),
+  roomTypeId: z.preprocess((v) => Number(v), z.number().int()).optional(),
+  status: z.enum(["disponible", "ocupado", "mantenimiento"]).optional(),
+  description: z.string().optional(),
+});
+
+/* 
+        CONTROLADORES
+*/
+
+// Obtener todas las habitaciones
+export const getAllRooms = async (_req: Request, res: Response) => {
   try {
     const rooms = await prisma.room.findMany({
       include: { roomType: true },
       orderBy: { number: "asc" },
     });
-    res.json(rooms);
+
+    return res.status(200).json({ success: true, rooms });
   } catch (err) {
-    console.error("Error obteniendo habitaciones:", err);
-    res.status(500).json({ error: "Error al obtener habitaciones" });
+    console.error(" Error obteniendo habitaciones:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Error al obtener habitaciones",
+    });
   }
 };
 
-/**  Obtener habitaciones disponibles en un rango de fechas */
+// Obtener habitaciones disponibles
 export const getAvailableRooms = async (req: Request, res: Response) => {
   try {
     const { checkIn, checkOut } = req.query;
 
     if (!checkIn || !checkOut) {
-      return res.status(400).json({ error: "Faltan parámetros de fecha" });
+      return res.status(400).json({
+        success: false,
+        error: "Faltan parámetros de fecha",
+      });
     }
 
     const checkInDate = new Date(checkIn as string);
@@ -33,124 +64,139 @@ export const getAvailableRooms = async (req: Request, res: Response) => {
         bookings: {
           none: {
             AND: [
-              { checkIn: { lt: checkOutDate } },  
-              { checkOut: { gt: checkInDate } }    
-            ]
-          }
-        }
+              { checkIn: { lt: checkOutDate } },
+              { checkOut: { gt: checkInDate } },
+            ],
+          },
+        },
       },
       include: { roomType: true },
       orderBy: { number: "asc" },
     });
 
-    res.json(availableRooms);
+    return res.status(200).json({ success: true, availableRooms });
   } catch (error) {
-    console.error("Error obteniendo habitaciones disponibles:", error);
-    res.status(500).json({ error: "Error al obtener habitaciones disponibles" });
+    console.error(" Error obteniendo habitaciones disponibles:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Error al obtener habitaciones disponibles",
+    });
   }
 };
 
+// Crear habitación
 export const createRoom = async (req: Request, res: Response) => {
   try {
-    console.log("Datos recibidos en /api/rooms:", req.body);
+    const parsed = createRoomSchema.safeParse(req.body);
 
-    // Extraer valores tal como vienen desde el front
-    const { number, floor, roomTypeId, status, description } = req.body;
-
-    // Validaciones básicas
-    if (!number) {
-      return res.status(400).json({ error: "Número es requerido" });
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Datos inválidos",
+        errors: parsed.error.flatten().fieldErrors,
+      });
     }
 
-    // floor puede venir como string o number — convertir y validar
-    const parsedFloor = typeof floor === "number" ? floor : parseInt(floor);
-    if (Number.isNaN(parsedFloor)) {
-      return res.status(400).json({ error: "Piso inválido" });
-    }
-
-    // roomTypeId puede venir como string o number — convertir y validar
-    const parsedRoomTypeId =
-      typeof roomTypeId === "number" ? roomTypeId : parseInt(roomTypeId);
-    if (Number.isNaN(parsedRoomTypeId)) {
-      return res
-        .status(400)
-        .json({ error: "Tipo de habitación inválido o no seleccionado" });
-    }
-
-    // Crear habitación
     const room = await prisma.room.create({
-      data: {
-        number,
-        floor: parsedFloor,
-        roomTypeId: parsedRoomTypeId,
-        status: status || "disponible",
-        description,
-      },
+      data: parsed.data,
     });
 
-    res.status(201).json(room);
-  } catch (err) {
-    console.error("Error creando habitación:", err);
-    // Distingo errores del DB y devuelvo 500
-    res.status(500).json({ error: "Error creando habitación" });
+    return res.status(201).json({
+      success: true,
+      message: "Habitación creada correctamente",
+      room,
+    });
+  } catch (err: any) {
+    console.error(" Error creando habitación:", err);
+
+    if (err.code === "P2002") {
+      return res.status(400).json({
+        success: false,
+        error: "El número de habitación ya existe",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: "Error creando habitación",
+    });
   }
 };
 
+// Eliminar habitación
 export const deleteRoom = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
 
-    const roomId = parseInt(id);
-    if (isNaN(roomId)) {
-      return res.status(400).json({ error: "ID inválido" });
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, error: "ID inválido" });
     }
 
-    await prisma.room.delete({
-      where: { id: roomId },
-    });
+    await prisma.room.delete({ where: { id } });
 
-    res.json({ message: "Habitación eliminada correctamente" });
+    return res.status(200).json({
+      success: true,
+      message: "Habitación eliminada correctamente",
+    });
   } catch (e: any) {
-    console.error("Error eliminando habitación:", e);
+    console.error(" Error eliminando habitación:", e);
 
     if (e.code === "P2025") {
-      return res.status(404).json({ error: "Habitación no encontrada" });
+      return res.status(404).json({
+        success: false,
+        error: "Habitación no encontrada",
+      });
     }
 
-    res.status(500).json({ error: "Error al eliminar habitación" });
+    return res.status(500).json({
+      success: false,
+      error: "Error al eliminar habitación",
+    });
   }
 };
- export const updateRoom = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
 
-    const roomId = parseInt(id);
-    if (isNaN(roomId)) {
-      return res.status(400).json({ error: "ID inválido" });
+// Actualizar habitación
+export const updateRoom = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, error: "ID inválido" });
     }
 
-    const { number, floor, roomTypeId, status, description } = req.body;
+    const parsed = updateRoomSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: "Datos inválidos",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
 
     const updated = await prisma.room.update({
-      where: { id: roomId },
-      data: {
-        number,
-        floor,
-        roomTypeId,
-        status,
-        description,
-      },
+      where: { id },
+      data: parsed.data,
     });
 
-    res.json(updated);
+    return res.status(200).json({
+      success: true,
+      message: "Habitación actualizada correctamente",
+      updated,
+    });
   } catch (e: any) {
-    console.error("Error actualizando habitación:", e);
+    console.error(" Error actualizando habitación:", e);
 
     if (e.code === "P2025") {
-      return res.status(404).json({ error: "Habitación no encontrada" });
+      return res.status(404).json({
+        success: false,
+        error: "Habitación no encontrada",
+      });
     }
 
-    res.status(500).json({ error: "Error al actualizar habitación" });
+    return res.status(500).json({
+      success: false,
+      error: "Error al actualizar habitación",
+    });
   }
 };
-
