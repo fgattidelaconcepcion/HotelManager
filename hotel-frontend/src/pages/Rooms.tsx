@@ -1,320 +1,319 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card, CardBody } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
 
 interface RoomType {
   id: number;
   name: string;
-  basePrice: number;
+  basePrice?: number | null;
 }
 
-interface Room {
+export interface Room {
   id: number;
   number: string;
   floor: number;
-  status: string;
-  description: string;
-  roomType: RoomType;
-  roomTypeId: number;
-}
-
-interface FormRoom {
-  id: number;
-  number: string;
-  floor: string; // en el form lo manejamos como string
-  roomTypeId: string | number;
-  status: string;
-  description: string;
+  description?: string | null;
+  roomType?: RoomType | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export default function Rooms() {
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
-  const [showModal, setShowModal] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [formRoom, setFormRoom] = useState<FormRoom>({
-    id: 0,
-    number: "",
-    floor: "",
-    roomTypeId: "",
-    status: "disponible",
-    description: "",
-  });
+  const [searchText, setSearchText] = useState("");
+  const [floorFilter, setFloorFilter] = useState<string>("");
+  const [roomTypeFilter, setRoomTypeFilter] = useState<string>("");
 
-  const fetchRooms = async () => {
+  const loadRooms = async () => {
     try {
+      setLoading(true);
+      setError(null);
       const res = await api.get("/rooms");
-      const data = res.data?.data;
-      if (Array.isArray(data)) {
-        setRooms(data);
-      } else {
-        setRooms([]);
-      }
-    } catch (e) {
-      console.error("Error fetching rooms:", e);
-      setRooms([]);
-    }
-  };
-
-  const fetchRoomTypes = async () => {
-    try {
-      const res = await api.get("/room-types");
-      const data = res.data?.data;
-      if (Array.isArray(data)) {
-        setRoomTypes(data);
-      } else {
-        setRoomTypes([]);
-      }
-    } catch (e) {
-      console.error("Error fetching room types:", e);
-      setRoomTypes([]);
+      const data = res.data?.data ?? res.data;
+      setRooms(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error("Error loading rooms", err);
+      setError(
+        err?.response?.data?.error ||
+          "Hubo un error al cargar las habitaciones. Intenta nuevamente."
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchRooms();
-    fetchRoomTypes();
+    loadRooms();
   }, []);
 
-  const openCreateModal = () => {
-    setIsEditing(false);
-    setFormRoom({
-      id: 0,
-      number: "",
-      floor: "",
-      roomTypeId: "",
-      status: "disponible",
-      description: "",
-    });
-    setShowModal(true);
+  const formatCurrency = (value?: number | null) => {
+    if (value == null) return "-";
+    return new Intl.NumberFormat("es-UY", {
+      style: "currency",
+      currency: "UYU",
+      minimumFractionDigits: 0,
+    }).format(value);
   };
 
-  const openEditModal = (room: Room) => {
-    setIsEditing(true);
-    setFormRoom({
-      id: room.id,
-      number: room.number,
-      floor: String(room.floor),
-      roomTypeId: room.roomTypeId,
-      status: room.status,
-      description: room.description,
-    });
-    setShowModal(true);
-  };
+  const floors = useMemo(
+    () =>
+      Array.from(new Set(rooms.map((r) => r.floor))).sort((a, b) => a - b),
+    [rooms]
+  );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const roomTypeNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rooms
+            .map((r) => r.roomType?.name)
+            .filter((x): x is string => Boolean(x))
+        )
+      ).sort(),
+    [rooms]
+  );
 
-    const parsedFloor = parseInt(String(formRoom.floor), 10);
-    const parsedType = parseInt(String(formRoom.roomTypeId), 10);
+  const filteredRooms = useMemo(() => {
+    return rooms.filter((room) => {
+      let ok = true;
 
-    if (!formRoom.number || isNaN(parsedFloor) || isNaN(parsedType)) {
-      alert("Completa todos los campos correctamente.");
-      return;
-    }
-
-    const payload = {
-      number: formRoom.number,
-      floor: parsedFloor,
-      roomTypeId: parsedType,
-      status: formRoom.status || "disponible",
-      description: formRoom.description,
-    };
-
-    console.log("Payload enviado a /rooms:", payload);
-
-    try {
-      if (isEditing) {
-        await api.put(`/rooms/${formRoom.id}`, payload);
-      } else {
-        await api.post("/rooms", payload);
+      if (searchText.trim()) {
+        const text = searchText.toLowerCase();
+        ok =
+          ok &&
+          (room.number.toLowerCase().includes(text) ||
+            room.description?.toLowerCase().includes(text) ||
+            room.roomType?.name?.toLowerCase().includes(text) ||
+            String(room.id).includes(text));
       }
 
-      setShowModal(false);
-      await fetchRooms();
-    } catch (err) {
-      console.error("Error saving room:", err);
+      if (floorFilter) {
+        ok = ok && String(room.floor) === floorFilter;
+      }
 
-      const anyErr = err as {
-        response?: {
-          data?: {
-            error?: string;
-            message?: string;
-          };
-        };
-      };
+      if (roomTypeFilter) {
+        ok = ok && room.roomType?.name === roomTypeFilter;
+      }
 
-      console.error("Respuesta del backend:", anyErr.response?.data);
+      return ok;
+    });
+  }, [rooms, searchText, floorFilter, roomTypeFilter]);
 
-      const msg =
-        anyErr.response?.data?.error ||
-        anyErr.response?.data?.message ||
-        "Error al guardar la habitación";
-
-      alert(msg);
-    }
-  };
-
-  const deleteRoom = async (id: number) => {
-    if (!confirm("¿Eliminar esta habitación?")) return;
-
-    try {
-      await api.delete(`/rooms/${id}`);
-      fetchRooms();
-    } catch (e) {
-      console.error("Error deleting room:", e);
-      alert("No se pudo eliminar");
-    }
-  };
+  const totalRooms = rooms.length;
+  const roomsWithType = rooms.filter((r) => !!r.roomType).length;
+  const roomsWithoutType = totalRooms - roomsWithType;
 
   return (
-    <div className="text-white">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Habitaciones</h1>
-        <button
-          onClick={openCreateModal}
-          className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg"
-        >
-          ➕ Agregar habitación
-        </button>
-      </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <PageHeader
+        title="Habitaciones"
+        description="Gestiona las habitaciones del hotel."
+        actions={
+          <Button disabled className="opacity-70 cursor-not-allowed">
+            Nueva habitación (pronto)
+          </Button>
+        }
+      />
 
-      <table className="min-w-full bg-gray-800 rounded-lg overflow-hidden">
-        <thead>
-          <tr>
-            <th className="p-2">Número</th>
-            <th className="p-2">Piso</th>
-            <th className="p-2">Tipo</th>
-            <th className="p-2">Precio base</th>
-            <th className="p-2">Estado</th>
-            <th className="p-2">Descripción</th>
-            <th className="p-2">Acciones</th>
-          </tr>
-        </thead>
+      {/* Resumen */}
+      <Card>
+        <CardBody>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <p className="text-xs text-slate-500">Total de habitaciones</p>
+              <p className="text-lg font-semibold mt-1">{totalRooms}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Con tipo asignado</p>
+              <p className="text-lg font-semibold mt-1">{roomsWithType}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Sin tipo asignado</p>
+              <p className="text-lg font-semibold mt-1">{roomsWithoutType}</p>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
 
-        <tbody>
-          {rooms.map((room) => (
-            <tr key={room.id} className="border-t border-gray-700">
-              <td className="p-2">{room.number}</td>
-              <td className="p-2">{room.floor}</td>
-              <td className="p-2">{room.roomType?.name}</td>
-              <td className="p-2">${room.roomType?.basePrice}</td>
-              <td className="p-2 capitalize">{room.status}</td>
-              <td className="p-2">{room.description}</td>
-              <td className="p-2 flex gap-2">
-                <button
-                  onClick={() => openEditModal(room)}
-                  className="bg-yellow-600 px-2 py-1 rounded"
-                >
-                  ✏️
-                </button>
-                <button
-                  onClick={() => deleteRoom(room.id)}
-                  className="bg-red-600 px-2 py-1 rounded"
-                >
-                  🗑️
-                </button>
-              </td>
-            </tr>
-          ))}
-
-          {rooms.length === 0 && (
-            <tr>
-              <td className="p-4 text-center text-gray-400" colSpan={7}>
-                No hay habitaciones cargadas todavía.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center">
-          <div className="bg-gray-900 p-6 rounded-lg w-96">
-            <h2 className="text-xl font-semibold mb-4">
-              {isEditing ? "Editar habitación" : "Nueva habitación"}
-            </h2>
-
-            <form onSubmit={handleSubmit} className="space-y-3">
+      {/* Filtros */}
+      <Card>
+        <CardBody>
+          <form className="flex flex-wrap gap-4 items-end">
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-slate-700">
+                Buscar
+              </label>
               <input
                 type="text"
-                placeholder="Número"
-                value={formRoom.number}
-                onChange={(e) =>
-                  setFormRoom({ ...formRoom, number: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                className="mt-1 border rounded px-3 py-2 text-sm w-56"
+                placeholder="Nro habitación, descripción, tipo..."
               />
+            </div>
 
-              <input
-                type="number"
-                placeholder="Piso"
-                value={formRoom.floor}
-                onChange={(e) =>
-                  setFormRoom({ ...formRoom, floor: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
-              />
-
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-slate-700">
+                Piso
+              </label>
               <select
-                value={formRoom.roomTypeId}
-                onChange={(e) =>
-                  setFormRoom({
-                    ...formRoom,
-                    roomTypeId: Number(e.target.value),
-                  })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
+                value={floorFilter}
+                onChange={(e) => setFloorFilter(e.target.value)}
+                className="mt-1 border rounded px-3 py-2 text-sm w-32"
               >
-                <option value="">Selecciona tipo</option>
-                {roomTypes.map((type) => (
-                  <option key={type.id} value={type.id}>
-                    {type.name} (${type.basePrice})
+                <option value="">Todos</option>
+                {floors.map((floor) => (
+                  <option key={floor} value={floor}>
+                    {floor}
                   </option>
                 ))}
               </select>
+            </div>
 
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-slate-700">
+                Tipo
+              </label>
               <select
-                value={formRoom.status}
-                onChange={(e) =>
-                  setFormRoom({ ...formRoom, status: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
+                value={roomTypeFilter}
+                onChange={(e) => setRoomTypeFilter(e.target.value)}
+                className="mt-1 border rounded px-3 py-2 text-sm w-44"
               >
-                <option value="disponible">Disponible</option>
-                <option value="ocupado">Ocupado</option>
-                <option value="mantenimiento">Mantenimiento</option>
+                <option value="">Todos</option>
+                {roomTypeNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
               </select>
+            </div>
 
-              <textarea
-                placeholder="Descripción"
-                value={formRoom.description}
-                onChange={(e) =>
-                  setFormRoom({ ...formRoom, description: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
-              />
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={loadRooms}>
+                Refrescar
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setSearchText("");
+                  setFloorFilter("");
+                  setRoomTypeFilter("");
+                }}
+              >
+                Limpiar filtros
+              </Button>
+            </div>
+          </form>
+        </CardBody>
+      </Card>
 
-              <div className="flex justify-end gap-3 mt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="bg-gray-700 px-4 py-2 rounded"
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  type="submit"
-                  className="bg-green-600 px-4 py-2 rounded"
-                >
-                  {isEditing ? "Guardar cambios" : "Guardar"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* Mensajes de estado */}
+      {error && (
+        <Card>
+          <CardBody>
+            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
+              {error}
+            </div>
+          </CardBody>
+        </Card>
       )}
+
+      {/* Tabla de habitaciones */}
+      <Card>
+        <CardBody>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    ID
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Habitación
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Tipo
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium text-slate-700">
+                    Tarifa base
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Descripción
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium text-slate-700">
+                    Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRooms.length === 0 && !loading && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-4 py-6 text-center text-slate-500"
+                    >
+                      No hay habitaciones que coincidan con los filtros.
+                    </td>
+                  </tr>
+                )}
+
+                {filteredRooms.map((room) => (
+                  <tr key={room.id} className="border-t last:border-b">
+                    <td className="px-4 py-2 align-top">{room.id}</td>
+                    <td className="px-4 py-2 align-top">
+                      <div className="flex flex-col">
+                        <span className="font-medium">
+                          Hab {room.number}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          Piso {room.floor}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      {room.roomType?.name ?? "-"}
+                    </td>
+                    <td className="px-4 py-2 align-top text-right">
+                      {formatCurrency(room.roomType?.basePrice ?? null)}
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      {room.description || "-"}
+                    </td>
+                    <td className="px-4 py-2 align-top text-right space-x-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-xs px-3 py-1"
+                        disabled
+                      >
+                        Editar
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+
+                {loading && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-4 py-4 text-center text-slate-500"
+                    >
+                      Cargando...
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardBody>
+      </Card>
     </div>
   );
 }

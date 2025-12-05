@@ -1,282 +1,288 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card, CardBody } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
 
-interface Guest {
+export interface Guest {
   id: number;
   name: string;
   email?: string | null;
   phone?: string | null;
-  createdAt: string;
-}
-
-interface FormGuest {
-  id: number | null;
-  name: string;
-  email: string;
-  phone: string;
+  documentNumber?: string | null;
+  address?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export default function Guests() {
   const [guests, setGuests] = useState<Guest[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const [showModal, setShowModal] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [formGuest, setFormGuest] = useState<FormGuest>({
-    id: null,
-    name: "",
-    email: "",
-    phone: "",
-  });
+  const [searchText, setSearchText] = useState("");
+  const [onlyWithEmail, setOnlyWithEmail] = useState(false);
+  const [onlyWithPhone, setOnlyWithPhone] = useState(false);
 
-  const fetchGuests = async (searchValue?: string) => {
+  const loadGuests = async () => {
     try {
       setLoading(true);
-      const params = searchValue ? { search: searchValue } : undefined;
-      const res = await api.get("/guests", { params });
-      const data = res.data?.data || res.data?.guests || [];
-      if (Array.isArray(data)) {
-        setGuests(data);
-      } else {
-        setGuests([]);
-      }
-    } catch (e) {
-      console.error("Error fetching guests:", e);
-      setGuests([]);
+      setError(null);
+      const res = await api.get("/guests");
+      const data = res.data?.data ?? res.data;
+      setGuests(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error("Error loading guests", err);
+      setError(
+        err?.response?.data?.error ||
+          "Hubo un error al cargar los huéspedes. Intenta nuevamente."
+      );
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchGuests();
+    loadGuests();
   }, []);
 
-  const openCreateModal = () => {
-    setIsEditing(false);
-    setFormGuest({
-      id: null,
-      name: "",
-      email: "",
-      phone: "",
-    });
-    setShowModal(true);
-  };
+  const filteredGuests = useMemo(() => {
+    return guests.filter((g) => {
+      let ok = true;
 
-  const openEditModal = (guest: Guest) => {
-    setIsEditing(true);
-    setFormGuest({
-      id: guest.id,
-      name: guest.name,
-      email: guest.email ?? "",
-      phone: guest.phone ?? "",
-    });
-    setShowModal(true);
-  };
+      if (searchText.trim()) {
+        const text = searchText.toLowerCase();
+        const name = g.name?.toLowerCase() || "";
+        const email = g.email?.toLowerCase() || "";
+        const phone = g.phone?.toLowerCase() || "";
+        const doc = g.documentNumber?.toLowerCase() || "";
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formGuest.name.trim()) {
-      alert("El nombre es obligatorio.");
-      return;
-    }
-
-    const payload = {
-      name: formGuest.name.trim(),
-      email: formGuest.email.trim() || "",
-      phone: formGuest.phone.trim() || "",
-    };
-
-    try {
-      if (isEditing && formGuest.id != null) {
-        await api.put(`/guests/${formGuest.id}`, payload);
-      } else {
-        await api.post("/guests", payload);
+        ok =
+          ok &&
+          (name.includes(text) ||
+            email.includes(text) ||
+            phone.includes(text) ||
+            doc.includes(text) ||
+            String(g.id).includes(text));
       }
 
-      setShowModal(false);
-      await fetchGuests(search);
-    } catch (err) {
-      console.error("Error saving guest:", err);
+      if (onlyWithEmail) {
+        ok = ok && !!g.email;
+      }
 
-      const anyErr = err as {
-        response?: {
-          data?: {
-            error?: string;
-            message?: string;
-          };
-        };
-      };
+      if (onlyWithPhone) {
+        ok = ok && !!g.phone;
+      }
 
-      const msg =
-        anyErr.response?.data?.error ||
-        anyErr.response?.data?.message ||
-        "Error al guardar el huésped";
-
-      alert(msg);
-    }
-  };
-
-  const deleteGuest = async (id: number) => {
-    if (!confirm("¿Eliminar este huésped?")) return;
-
-    try {
-      await api.delete(`/guests/${id}`);
-      await fetchGuests(search);
-    } catch (e) {
-      console.error("Error deleting guest:", e);
-      alert("No se pudo eliminar el huésped");
-    }
-  };
-
-  const formatDate = (iso: string) =>
-    new Date(iso).toLocaleDateString("es-UY", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
+      return ok;
     });
+  }, [guests, searchText, onlyWithEmail, onlyWithPhone]);
 
-  const handleSearchChange = (value: string) => {
-    setSearch(value);
-    // Búsqueda simple sin debounce por ahora
-    fetchGuests(value);
-  };
+  const totalGuests = guests.length;
+  const guestsWithEmail = guests.filter((g) => !!g.email).length;
+  const guestsWithPhone = guests.filter((g) => !!g.phone).length;
 
   return (
-    <div className="text-white">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Huéspedes</h1>
+    <div className="space-y-6">
+      {/* Header */}
+      <PageHeader
+        title="Huéspedes"
+        description="Gestiona los huéspedes del hotel."
+        actions={
+          <Button disabled className="opacity-70 cursor-not-allowed">
+            Nuevo huésped (pronto)
+          </Button>
+        }
+      />
 
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Buscar (nombre, email, teléfono)"
-            value={search}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            className="p-2 rounded bg-gray-800 text-sm w-64"
-          />
-          <button
-            onClick={openCreateModal}
-            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm"
-          >
-            ➕ Nuevo huésped
-          </button>
-        </div>
-      </div>
-
-      {loading && (
-        <p className="mb-2 text-gray-300 text-sm">Cargando huéspedes...</p>
-      )}
-
-      <table className="min-w-full bg-gray-800 rounded-lg overflow-hidden">
-        <thead>
-          <tr>
-            <th className="p-2 text-left text-sm">#</th>
-            <th className="p-2 text-left text-sm">Nombre</th>
-            <th className="p-2 text-left text-sm">Email</th>
-            <th className="p-2 text-left text-sm">Teléfono</th>
-            <th className="p-2 text-left text-sm">Creado</th>
-            <th className="p-2 text-left text-sm">Acciones</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {guests.map((g) => (
-            <tr key={g.id} className="border-t border-gray-700">
-              <td className="p-2 text-sm">{g.id}</td>
-              <td className="p-2 text-sm">{g.name}</td>
-              <td className="p-2 text-sm">{g.email || "-"}</td>
-              <td className="p-2 text-sm">{g.phone || "-"}</td>
-              <td className="p-2 text-sm">{formatDate(g.createdAt)}</td>
-              <td className="p-2 text-sm">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openEditModal(g)}
-                    className="bg-yellow-600 px-2 py-1 rounded text-xs"
-                  >
-                    ✏️ Editar
-                  </button>
-                  <button
-                    onClick={() => deleteGuest(g.id)}
-                    className="bg-red-600 px-2 py-1 rounded text-xs"
-                  >
-                    🗑️ Eliminar
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-
-          {guests.length === 0 && !loading && (
-            <tr>
-              <td className="p-4 text-center text-gray-400 text-sm" colSpan={6}>
-                No hay huéspedes cargados todavía.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center">
-          <div className="bg-gray-900 p-6 rounded-lg w-96">
-            <h2 className="text-xl font-semibold mb-4">
-              {isEditing ? "Editar huésped" : "Nuevo huésped"}
-            </h2>
-
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <input
-                type="text"
-                placeholder="Nombre"
-                value={formGuest.name}
-                onChange={(e) =>
-                  setFormGuest({ ...formGuest, name: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
-              />
-
-              <input
-                type="email"
-                placeholder="Email (opcional)"
-                value={formGuest.email}
-                onChange={(e) =>
-                  setFormGuest({ ...formGuest, email: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
-              />
-
-              <input
-                type="text"
-                placeholder="Teléfono (opcional)"
-                value={formGuest.phone}
-                onChange={(e) =>
-                  setFormGuest({ ...formGuest, phone: e.target.value })
-                }
-                className="w-full p-2 bg-gray-800 rounded"
-              />
-
-              <div className="flex justify-end gap-3 mt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="bg-gray-700 px-4 py-2 rounded"
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  type="submit"
-                  className="bg-green-600 px-4 py-2 rounded"
-                >
-                  {isEditing ? "Guardar cambios" : "Guardar"}
-                </button>
-              </div>
-            </form>
+      {/* Resumen */}
+      <Card>
+        <CardBody>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <p className="text-xs text-slate-500">Total de huéspedes</p>
+              <p className="text-lg font-semibold mt-1">{totalGuests}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Con email registrado</p>
+              <p className="text-lg font-semibold mt-1">
+                {guestsWithEmail}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Con teléfono registrado</p>
+              <p className="text-lg font-semibold mt-1">
+                {guestsWithPhone}
+              </p>
+            </div>
           </div>
-        </div>
+        </CardBody>
+      </Card>
+
+      {/* Filtros */}
+      <Card>
+        <CardBody>
+          <form className="flex flex-wrap gap-4 items-end">
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-slate-700">
+                Buscar
+              </label>
+              <input
+                type="text"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                className="mt-1 border rounded px-3 py-2 text-sm w-64"
+                placeholder="Nombre, email, teléfono, documento..."
+              />
+            </div>
+
+            <div className="flex items-center gap-2 mt-6">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={onlyWithEmail}
+                  onChange={(e) => setOnlyWithEmail(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                Solo con email
+              </label>
+
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={onlyWithPhone}
+                  onChange={(e) => setOnlyWithPhone(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                Solo con teléfono
+              </label>
+            </div>
+
+            <div className="flex gap-2 mt-4 md:mt-6">
+              <Button type="button" variant="secondary" onClick={loadGuests}>
+                Refrescar
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setSearchText("");
+                  setOnlyWithEmail(false);
+                  setOnlyWithPhone(false);
+                }}
+              >
+                Limpiar filtros
+              </Button>
+            </div>
+          </form>
+        </CardBody>
+      </Card>
+
+      {/* Mensajes de estado */}
+      {error && (
+        <Card>
+          <CardBody>
+            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
+              {error}
+            </div>
+          </CardBody>
+        </Card>
       )}
+
+      {/* Tabla de huéspedes */}
+      <Card>
+        <CardBody>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    ID
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Nombre
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Email
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Teléfono
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Documento
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                    Dirección
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium text-slate-700">
+                    Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredGuests.length === 0 && !loading && (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-4 py-6 text-center text-slate-500"
+                    >
+                      No hay huéspedes que coincidan con los filtros.
+                    </td>
+                  </tr>
+                )}
+
+                {filteredGuests.map((g) => (
+                  <tr key={g.id} className="border-t last:border-b">
+                    <td className="px-4 py-2 align-top">{g.id}</td>
+                    <td className="px-4 py-2 align-top">{g.name}</td>
+                    <td className="px-4 py-2 align-top">
+                      {g.email || "-"}
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      {g.phone || "-"}
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      {g.documentNumber || "-"}
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      {g.address || "-"}
+                    </td>
+                    <td className="px-4 py-2 align-top text-right space-x-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-xs px-3 py-1"
+                        disabled
+                      >
+                        Ver
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-xs px-3 py-1"
+                        disabled
+                      >
+                        Editar
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+
+                {loading && (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-4 py-4 text-center text-slate-500"
+                    >
+                      Cargando...
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardBody>
+      </Card>
     </div>
   );
 }

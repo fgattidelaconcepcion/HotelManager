@@ -2,16 +2,20 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AxiosError } from "axios";
 import api from "../api/api";
+import { Card, CardBody } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
     try {
       const res = await api.post("/auth/login", { email, password });
@@ -19,52 +23,91 @@ export default function Login() {
       navigate("/"); // redirige al dashboard
     } catch (err) {
       const axiosError = err as AxiosError<{ message?: string }>;
-      const message = axiosError.response?.data?.message || "Error logging in";
+      const message = axiosError.response?.data?.message || "Error al iniciar sesión";
       setError(message);
+    } finally {
+      setLoading(false);
     }
   };
-  
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">
-      <div className="bg-gray-800 p-8 rounded-lg shadow-lg w-96">
-        <h2 className="text-2xl font-bold mb-6 text-center">Login</h2>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+      <div className="max-w-md w-full">
+        <div className="flex items-center justify-center mb-6 gap-2">
+          <div className="h-10 w-10 rounded-2xl bg-blue-500 flex items-center justify-center text-white font-bold">
+            HM
+          </div>
+          <div>
+            <p className="text-sm text-slate-200 font-semibold">
+              HotelManager
+            </p>
+            <p className="text-xs text-slate-400">
+              Panel de administración
+            </p>
+          </div>
+        </div>
 
-        {error && <p className="text-red-400 mb-4">{error}</p>}
+        <Card>
+          <CardBody>
+            <h1 className="text-xl font-semibold text-slate-900 mb-1">
+              Iniciar sesión
+            </h1>
+            <p className="text-sm text-slate-500 mb-4">
+              Ingresa tus credenciales para acceder al panel.
+            </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            className="w-full p-2 bg-gray-700 rounded"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+            {error && (
+              <div className="mb-4 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
+                {error}
+              </div>
+            )}
 
-          <input
-            type="password"
-            placeholder="Password"
-            className="w-full p-2 bg-gray-700 rounded"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  placeholder="ejemplo@hotel.com"
+                  className="mt-1 w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
 
-          <button
-            type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded font-semibold"
-          >
-            Login
-          </button>
-        </form>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Contraseña
+                </label>
+                <input
+                  type="password"
+                  placeholder="********"
+                  className="mt-1 w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
 
-        <p className="mt-4 text-center text-sm">
-          Don’t have an account?{" "}
-          <span
-            className="text-blue-400 cursor-pointer hover:underline"
-            onClick={() => navigate("/signup")}
-          >
-            Sign up
-          </span>
-        </p>
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Ingresando..." : "Ingresar"}
+              </Button>
+            </form>
+
+            <p className="mt-4 text-center text-xs text-slate-500">
+              ¿No tienes cuenta?{" "}
+              <button
+                type="button"
+                className="text-blue-600 hover:underline"
+                onClick={() => navigate("/signup")}
+              >
+                Registrarse
+              </button>
+            </p>
+          </CardBody>
+        </Card>
       </div>
     </div>
   );
