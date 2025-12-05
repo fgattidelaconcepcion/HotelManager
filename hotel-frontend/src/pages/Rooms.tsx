@@ -17,36 +17,57 @@ interface Room {
   roomTypeId: number;
 }
 
+interface FormRoom {
+  id: number;
+  number: string;
+  floor: string; // en el form lo manejamos como string
+  roomTypeId: string | number;
+  status: string;
+  description: string;
+}
+
 export default function Rooms() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
 
-  const [formRoom, setFormRoom] = useState({
+  const [formRoom, setFormRoom] = useState<FormRoom>({
     id: 0,
     number: "",
     floor: "",
-    roomTypeId: "" as string | number,
-    status: "",
+    roomTypeId: "",
+    status: "disponible",
     description: "",
   });
 
   const fetchRooms = async () => {
     try {
       const res = await api.get("/rooms");
-      setRooms(res.data);
+      const data = res.data?.data;
+      if (Array.isArray(data)) {
+        setRooms(data);
+      } else {
+        setRooms([]);
+      }
     } catch (e) {
       console.error("Error fetching rooms:", e);
+      setRooms([]);
     }
   };
 
   const fetchRoomTypes = async () => {
     try {
       const res = await api.get("/room-types");
-      setRoomTypes(res.data);
+      const data = res.data?.data;
+      if (Array.isArray(data)) {
+        setRoomTypes(data);
+      } else {
+        setRoomTypes([]);
+      }
     } catch (e) {
       console.error("Error fetching room types:", e);
+      setRoomTypes([]);
     }
   };
 
@@ -62,7 +83,7 @@ export default function Rooms() {
       number: "",
       floor: "",
       roomTypeId: "",
-      status: "",
+      status: "disponible",
       description: "",
     });
     setShowModal(true);
@@ -84,38 +105,53 @@ export default function Rooms() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const parsedFloor = parseInt(String(formRoom.floor));
-    const parsedType = parseInt(String(formRoom.roomTypeId));
+    const parsedFloor = parseInt(String(formRoom.floor), 10);
+    const parsedType = parseInt(String(formRoom.roomTypeId), 10);
 
     if (!formRoom.number || isNaN(parsedFloor) || isNaN(parsedType)) {
       alert("Completa todos los campos correctamente.");
       return;
     }
 
+    const payload = {
+      number: formRoom.number,
+      floor: parsedFloor,
+      roomTypeId: parsedType,
+      status: formRoom.status || "disponible",
+      description: formRoom.description,
+    };
+
+    console.log("Payload enviado a /rooms:", payload);
+
     try {
       if (isEditing) {
-        await api.put(`/rooms/${formRoom.id}`, {
-          number: formRoom.number,
-          floor: parsedFloor,
-          roomTypeId: parsedType,
-          status: formRoom.status,
-          description: formRoom.description,
-        });
+        await api.put(`/rooms/${formRoom.id}`, payload);
       } else {
-        await api.post("/rooms", {
-          number: formRoom.number,
-          floor: parsedFloor,
-          roomTypeId: parsedType,
-          status: formRoom.status || "disponible",
-          description: formRoom.description,
-        });
+        await api.post("/rooms", payload);
       }
 
       setShowModal(false);
-      fetchRooms();
-    } catch (e) {
-      console.error("Error saving room:", e);
-      alert("Error al guardar la habitación");
+      await fetchRooms();
+    } catch (err) {
+      console.error("Error saving room:", err);
+
+      const anyErr = err as {
+        response?: {
+          data?: {
+            error?: string;
+            message?: string;
+          };
+        };
+      };
+
+      console.error("Respuesta del backend:", anyErr.response?.data);
+
+      const msg =
+        anyErr.response?.data?.error ||
+        anyErr.response?.data?.message ||
+        "Error al guardar la habitación";
+
+      alert(msg);
     }
   };
 
@@ -181,6 +217,14 @@ export default function Rooms() {
               </td>
             </tr>
           ))}
+
+          {rooms.length === 0 && (
+            <tr>
+              <td className="p-4 text-center text-gray-400" colSpan={7}>
+                No hay habitaciones cargadas todavía.
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
 
@@ -230,15 +274,17 @@ export default function Rooms() {
                 ))}
               </select>
 
-              <input
-                type="text"
-                placeholder="Estado"
+              <select
                 value={formRoom.status}
                 onChange={(e) =>
                   setFormRoom({ ...formRoom, status: e.target.value })
                 }
                 className="w-full p-2 bg-gray-800 rounded"
-              />
+              >
+                <option value="disponible">Disponible</option>
+                <option value="ocupado">Ocupado</option>
+                <option value="mantenimiento">Mantenimiento</option>
+              </select>
 
               <textarea
                 placeholder="Descripción"
