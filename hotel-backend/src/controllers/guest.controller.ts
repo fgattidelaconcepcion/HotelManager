@@ -1,88 +1,88 @@
 import { Request, Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 
-/* VALIDACIÓN */
+// Validación con Zod
 const guestSchema = z.object({
-  name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
-  email: z.string().email("Email inválido").optional().nullable(),
-  phone: z.string().min(6, "Teléfono inválido").optional().nullable(),
+  name: z.string().min(1, "El nombre es obligatorio"),
+  email: z.string().email("Email inválido").optional().or(z.literal("").transform(() => null)),
+  phone: z.string().optional().or(z.literal("").transform(() => null)),
 });
 
 const updateGuestSchema = guestSchema.partial();
 
-/* Limpiar undefined (Prisma no lo acepta) */
-function cleanObject(obj: any) {
-  const cleaned: any = {};
-  for (const key in obj) {
-    if (obj[key] !== undefined) cleaned[key] = obj[key];
-  }
-  return cleaned;
-}
-
-/* CONTROLADORES */
-
-// Obtener todos los huéspedes
-export const getGuests = async (_req: Request, res: Response) => {
+/* ============================================================
+      GET /api/guests   (lista + búsqueda)
+   ============================================================ */
+export const getAllGuests = async (req: Request, res: Response) => {
   try {
+    const { search } = req.query;
+    let where: Prisma.GuestWhereInput = {};
+
+    if (search && typeof search === "string") {
+      where.OR = [
+        { name:  { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+      ];
+    }
+
     const guests = await prisma.guest.findMany({
-      orderBy: { id: "asc" },
+      where,
+      orderBy: { createdAt: "desc" },
     });
-    return res.status(200).json({ success: true, guests });
+
+    return res.status(200).json({ success: true, data: guests });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: "Error al obtener huéspedes",
-    });
+    console.error("Error en getAllGuests:", error);
+    return res.status(500).json({ success: false, error: "Error al obtener huéspedes" });
   }
 };
 
-// Obtener huésped por ID
+/* ============================================================
+      GET /api/guests/:id
+   ============================================================ */
 export const getGuestById = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    if (isNaN(id))
-      return res.status(400).json({ success: false, error: "ID inválido" });
 
     const guest = await prisma.guest.findUnique({ where: { id } });
-    if (!guest)
-      return res
-        .status(404)
-        .json({ success: false, error: "Huésped no encontrado" });
 
-    return res.status(200).json({ success: true, guest });
+    if (!guest) {
+      return res.status(404).json({ success: false, message: "Huésped no encontrado" });
+    }
+
+    return res.json({ success: true, guest });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: "Error al obtener huésped",
-    });
+    console.error("Error en getGuestById:", error);
+    return res.status(500).json({ success: false, error: "Error al obtener huésped" });
   }
 };
 
-// Crear huésped
+/* ============================================================
+      POST /api/guests (Crear)
+   ============================================================ */
 export const createGuest = async (req: Request, res: Response) => {
   try {
     const parsed = guestSchema.safeParse(req.body);
+
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        message: "Datos inválidos",
-        errors: parsed.error.flatten().fieldErrors,
+        error: parsed.error.flatten().fieldErrors,
       });
     }
 
-    const cleanedData = cleanObject(parsed.data);
-
-    const newGuest = await prisma.guest.create({
-      data: cleanedData,
-    });
+    const newGuest = await prisma.guest.create({ data: parsed.data });
 
     return res.status(201).json({
       success: true,
       message: "Huésped creado correctamente",
       guest: newGuest,
     });
-  } catch (error) {
+  } catch (error: any) {
+    console.error("Error en createGuest:", error);
     return res.status(500).json({
       success: false,
       error: "Error al crear huésped",
@@ -90,71 +90,48 @@ export const createGuest = async (req: Request, res: Response) => {
   }
 };
 
-// Actualizar huésped
+/* ============================================================
+      PUT /api/guests/:id   (Actualizar)
+   ============================================================ */
 export const updateGuest = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    if (isNaN(id))
-      return res.status(400).json({ success: false, error: "ID inválido" });
 
     const parsed = updateGuestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        message: "Datos inválidos",
-        errors: parsed.error.flatten().fieldErrors,
+        error: parsed.error.flatten().fieldErrors,
       });
     }
 
-    const cleanedData = cleanObject(parsed.data);
-
-    const updatedGuest = await prisma.guest.update({
+    const updated = await prisma.guest.update({
       where: { id },
-      data: cleanedData,
+      data: parsed.data,
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Huésped actualizado correctamente",
-      guest: updatedGuest,
-    });
-  } catch (error: any) {
-    if (error.code === "P2025") {
-      return res
-        .status(404)
-        .json({ success: false, error: "Huésped no encontrado" });
-    }
-    return res.status(500).json({
-      success: false,
-      error: "Error al actualizar huésped",
-    });
+    return res.json({ success: true, guest: updated });
+  } catch (error) {
+    console.error("Error en updateGuest:", error);
+    return res.status(500).json({ success: false, error: "Error al actualizar huésped" });
   }
 };
 
-// Eliminar huésped
+/* ============================================================
+      DELETE /api/guests/:id
+   ============================================================ */
 export const deleteGuest = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
 
-    if (isNaN(id))
-      return res.status(400).json({ success: false, error: "ID inválido" });
-
     await prisma.guest.delete({ where: { id } });
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       message: "Huésped eliminado correctamente",
     });
-  } catch (error: any) {
-    if (error.code === "P2025") {
-      return res
-        .status(404)
-        .json({ success: false, error: "Huésped no encontrado" });
-    }
-
-    return res.status(500).json({
-      success: false,
-      error: "Error al eliminar huésped",
-    });
+  } catch (error) {
+    console.error("Error en deleteGuest:", error);
+    return res.status(500).json({ success: false, error: "Error al eliminar huésped" });
   }
 };

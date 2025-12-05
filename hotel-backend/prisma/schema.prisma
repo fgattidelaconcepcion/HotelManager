@@ -100,7 +100,25 @@ model Booking {
   status    BookingStatus @default(pending)
   createdAt DateTime      @default(now())
 
-  room  Room   @relation(fields: [roomId], references: [id])
-  user  User?  @relation(fields: [userId], references: [id])
-  guest Guest? @relation(fields: [guestId], references: [id])
+  room     Room      @relation(fields: [roomId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+  guest    Guest?    @relation(fields: [guestId], references: [id])
+  payments Payment[] // 👈 relación inversa con Payment
+}
+
+/**
+ * ============================
+ * MODELO PAYMENT
+ * ============================
+ */
+
+model Payment {
+  id        Int      @id @default(autoincrement())
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  bookingId Int
+  amount    Int // o Float/Decimal si querés más precisión
+  method    String // "cash", "card", "transfer", etc.
+  status    String // "pending", "completed", "failed", etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

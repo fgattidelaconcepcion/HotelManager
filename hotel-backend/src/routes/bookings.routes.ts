@@ -7,18 +7,12 @@ import {
   getBookingById,
   updateBookingStatus,
 } from "../controllers/bookings.controller";
-import { authMiddleware } from "../middlewares/authMiddleware";
 
 const router = Router();
 
 /*  
-     RUTAS PROTEGIDAS
-     (todas las reservas requieren autenticación)
-*/
-router.use(authMiddleware);
-
-/*  
-     RUTAS PRINCIPALES
+     RUTAS DE RESERVAS
+     (en desarrollo SIN auth; después podemos volver a protegerlas)
 */
 
 // Obtener todas las reservas
