@@ -26,7 +26,7 @@ export default function Layout() {
               HM
             </div>
             <div>
-              <p className="text-sm font-semibold">HotelManager</p>
+              <p className="text-sm font-semibold">Hotel Manager</p>
               <p className="text-xs text-slate-400">Panel de administración</p>
             </div>
           </div>

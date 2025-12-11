@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -16,6 +17,8 @@ export interface Guest {
 }
 
 export default function Guests() {
+  const navigate = useNavigate();
+
   const [guests, setGuests] = useState<Guest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +85,37 @@ export default function Guests() {
   const guestsWithEmail = guests.filter((g) => !!g.email).length;
   const guestsWithPhone = guests.filter((g) => !!g.phone).length;
 
+  const formatDate = (value?: string | null) => {
+    if (!value) return "-";
+    try {
+      return new Date(value).toLocaleDateString();
+    } catch {
+      return value;
+    }
+  };
+
+  const handleDelete = async (guest: Guest) => {
+    const ok = window.confirm(
+      `¿Seguro que quieres eliminar al huésped "${guest.name}" (ID ${guest.id})?`
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      await api.delete(`/guests/${guest.id}`);
+      await loadGuests();
+    } catch (err: any) {
+      console.error("Error deleting guest", err);
+      setError(
+        err?.response?.data?.error ||
+          "No se pudo eliminar el huésped. Intenta nuevamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -89,8 +123,8 @@ export default function Guests() {
         title="Huéspedes"
         description="Gestiona los huéspedes del hotel."
         actions={
-          <Button disabled className="opacity-70 cursor-not-allowed">
-            Nuevo huésped (pronto)
+          <Button onClick={() => navigate("/guests/new")}>
+            Nuevo huésped
           </Button>
         }
       />
@@ -98,21 +132,31 @@ export default function Guests() {
       {/* Resumen */}
       <Card>
         <CardBody>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div>
               <p className="text-xs text-slate-500">Total de huéspedes</p>
               <p className="text-lg font-semibold mt-1">{totalGuests}</p>
             </div>
             <div>
               <p className="text-xs text-slate-500">Con email registrado</p>
-              <p className="text-lg font-semibold mt-1">
-                {guestsWithEmail}
-              </p>
+              <p className="text-lg font-semibold mt-1">{guestsWithEmail}</p>
             </div>
             <div>
               <p className="text-xs text-slate-500">Con teléfono registrado</p>
-              <p className="text-lg font-semibold mt-1">
-                {guestsWithPhone}
+              <p className="text-lg font-semibold mt-1">{guestsWithPhone}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Última actualización</p>
+              <p className="text-sm mt-1 text-slate-600">
+                {formatDate(
+                  guests
+                    .slice()
+                    .sort(
+                      (a, b) =>
+                        new Date(b.updatedAt ?? b.createdAt ?? "").getTime() -
+                        new Date(a.updatedAt ?? a.createdAt ?? "").getTime()
+                    )[0]?.updatedAt
+                )}
               </p>
             </div>
           </div>
@@ -136,7 +180,7 @@ export default function Guests() {
               />
             </div>
 
-            <div className="flex items-center gap-2 mt-6">
+            <div className="flex items-center gap-4 mt-6">
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
@@ -252,17 +296,18 @@ export default function Guests() {
                         type="button"
                         variant="ghost"
                         className="text-xs px-3 py-1"
-                        disabled
+                        onClick={() => navigate(`/guests/${g.id}`)}
                       >
-                        Ver
+                        Ver / Editar
                       </Button>
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="danger"
                         className="text-xs px-3 py-1"
-                        disabled
+                        onClick={() => handleDelete(g)}
+                        disabled={loading}
                       >
-                        Editar
+                        Eliminar
                       </Button>
                     </td>
                   </tr>

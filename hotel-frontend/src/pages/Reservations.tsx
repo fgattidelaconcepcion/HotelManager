@@ -1,60 +1,62 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 
-type BookingStatus =
-  | "pending"
-  | "confirmed"
-  | "checked_in"
-  | "checked_out"
-  | "cancelled"
-  | string;
+type PaymentStatus = "pending" | "completed" | "failed";
 
-interface Guest {
+interface BookingGuest {
   id: number;
   name: string;
   email?: string | null;
-  phone?: string | null;
 }
 
-interface RoomType {
+interface BookingRoomType {
   id: number;
   name: string;
-  basePrice?: number | null;
+  basePrice?: number;
 }
 
-interface Room {
+interface BookingRoom {
   id: number;
   number: string;
   floor: number;
-  roomType?: RoomType | null;
+  roomType?: BookingRoomType | null;
 }
 
-export interface Booking {
+interface Booking {
   id: number;
-  guest?: Guest | null;
-  room?: Room | null;
+  room?: BookingRoom | null;
+  guest?: BookingGuest | null;
   checkIn: string;
   checkOut: string;
   totalPrice: number;
-  status: BookingStatus;
-  createdAt?: string;
-  updatedAt?: string;
+  status: string;
+}
+
+interface Payment {
+  id: number;
+  bookingId: number;
+  amount: number;
+  status: PaymentStatus;
 }
 
 export default function Reservations() {
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
-  // filtros en front (no tocan el backend)
-  const [searchText, setSearchText] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | BookingStatus>("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [filterGuest, setFilterGuest] = useState("");
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState<
+    "" | "none" | "partial" | "full"
+  >("");
+
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadBookings = async () => {
     try {
@@ -74,11 +76,26 @@ export default function Reservations() {
     }
   };
 
+  const loadPayments = async () => {
+    try {
+      setLoadingPayments(true);
+      const res = await api.get("/payments");
+      const data = res.data?.data ?? res.data;
+      setPayments(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error loading payments for reservations", err);
+      // no lo considero crítico, solo no mostramos resumen de pagos
+    } finally {
+      setLoadingPayments(false);
+    }
+  };
+
   useEffect(() => {
     loadBookings();
+    loadPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // helpers
   const formatDate = (value: string) => {
     try {
       return new Date(value).toLocaleDateString();
@@ -94,209 +111,117 @@ export default function Reservations() {
       minimumFractionDigits: 0,
     }).format(value);
 
-  const getStatusLabel = (status: BookingStatus) => {
-    switch (status) {
-      case "pending":
-        return "Pendiente";
-      case "confirmed":
-        return "Confirmada";
-      case "checked_in":
-        return "Check-in";
-      case "checked_out":
-        return "Check-out";
-      case "cancelled":
-        return "Cancelada";
-      default:
-        return status;
-    }
+  const getBookingStatusLabel = (status: string) => {
+    const lower = status.toLowerCase();
+    if (lower === "pending") return "Pendiente";
+    if (lower === "confirmed") return "Confirmada";
+    if (lower === "cancelled" || lower === "canceled") return "Cancelada";
+    if (lower === "checked_in") return "Check-in realizado";
+    if (lower === "checked_out") return "Check-out realizado";
+    return status;
   };
 
-  const getStatusVariant = (status: BookingStatus) => {
-    switch (status) {
-      case "confirmed":
-      case "checked_in":
-      case "checked_out":
-        return "success" as const;
-      case "pending":
-        return "warning" as const;
-      case "cancelled":
-        return "danger" as const;
-      default:
-        return "default" as const;
-    }
+  const getBookingStatusVariant = (status: string) => {
+    const lower = status.toLowerCase();
+    if (lower === "pending") return "warning";
+    if (lower === "confirmed") return "info";
+    if (lower === "cancelled" || lower === "canceled") return "danger";
+    if (lower === "checked_in") return "success";
+    if (lower === "checked_out") return "secondary";
+    return "secondary";
   };
 
-  // aplicar filtros en memoria
-  const filteredBookings = useMemo(() => {
-    return bookings.filter((b) => {
-      let ok = true;
+  // Totales generales (sobre todas las reservas)
+  const totalBookings = bookings.length;
+  const totalRevenue = bookings.reduce(
+    (sum, b) => sum + (b.totalPrice ?? 0),
+    0
+  );
 
-      if (searchText.trim()) {
-        const text = searchText.toLowerCase();
-        const guestName = b.guest?.name?.toLowerCase() || "";
-        const roomNumber = b.room?.number?.toLowerCase() || "";
-        ok =
-          ok &&
-          (guestName.includes(text) ||
-            roomNumber.includes(text) ||
-            String(b.id).includes(text));
-      }
+  const totalPaidAllBookings = payments
+    .filter((p) => p.status === "completed")
+    .reduce((sum, p) => sum + p.amount, 0);
 
-      if (statusFilter) {
-        ok = ok && b.status === statusFilter;
-      }
+  // Filtros: por huésped y estado de pago
+  const filteredBookings = bookings.filter((booking) => {
+    const guestName = booking.guest?.name?.toLowerCase() ?? "";
+    const matchesGuest =
+      !filterGuest.trim() ||
+      guestName.includes(filterGuest.trim().toLowerCase());
 
-      if (dateFrom) {
-        const from = new Date(dateFrom);
-        const checkIn = new Date(b.checkIn);
-        ok = ok && checkIn >= from;
-      }
+    const paymentsForBooking = payments.filter(
+      (p) => p.bookingId === booking.id && p.status === "completed"
+    );
+    const totalPaid = paymentsForBooking.reduce(
+      (sum, p) => sum + p.amount,
+      0
+    );
+    const remaining =
+      booking.totalPrice != null ? booking.totalPrice - totalPaid : 0;
 
-      if (dateTo) {
-        const to = new Date(dateTo);
-        const checkOut = new Date(b.checkOut);
-        ok = ok && checkOut <= to;
-      }
+    let paymentStatus: "none" | "partial" | "full" = "none";
+    if (totalPaid <= 0) paymentStatus = "none";
+    else if (remaining > 0) paymentStatus = "partial";
+    else paymentStatus = "full";
 
-      return ok;
-    });
-  }, [bookings, searchText, statusFilter, dateFrom, dateTo]);
+    const matchesPaymentStatus =
+      !filterPaymentStatus || paymentStatus === filterPaymentStatus;
 
-  // totales rápido
-  const totalReservations = bookings.length;
-  const totalConfirmed = bookings.filter((b) => b.status === "confirmed").length;
-  const totalPending = bookings.filter((b) => b.status === "pending").length;
-  const totalCancelled = bookings.filter((b) => b.status === "cancelled").length;
+    return matchesGuest && matchesPaymentStatus;
+  });
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
         title="Reservas"
-        description="Gestiona las reservas del hotel."
+        description="Consulta y gestiona todas las reservas del hotel."
         actions={
-          // Más adelante podemos abrir un modal para crear reserva
-          <Button disabled className="opacity-70 cursor-not-allowed">
-            Nueva reserva (pronto)
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => navigate("/payments")}
+            >
+              Ir a pagos
+            </Button>
+            <Button
+              type="button"
+              onClick={() => navigate("/reservations/new")}
+            >
+              Nueva reserva
+            </Button>
+          </div>
         }
       />
 
-      {/* Resumen */}
+      {/* Resumen general */}
       <Card>
         <CardBody>
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <p className="text-xs text-slate-500">Total de reservas</p>
+              <p className="text-xs text-gray-500">Total de reservas</p>
+              <p className="text-lg font-semibold mt-1">{totalBookings}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">
+                Importe total de reservas
+              </p>
               <p className="text-lg font-semibold mt-1">
-                {totalReservations}
+                {formatCurrency(totalRevenue)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Confirmadas</p>
-              <p className="text-lg font-semibold mt-1">
-                {totalConfirmed}
+              <p className="text-xs text-gray-500">
+                Total pagado (pagos completados)
               </p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Pendientes</p>
               <p className="text-lg font-semibold mt-1">
-                {totalPending}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Canceladas</p>
-              <p className="text-lg font-semibold mt-1">
-                {totalCancelled}
+                {loadingPayments
+                  ? "Cargando..."
+                  : formatCurrency(totalPaidAllBookings)}
               </p>
             </div>
           </div>
-        </CardBody>
-      </Card>
-
-      {/* Filtros */}
-      <Card>
-        <CardBody>
-          <form className="flex flex-wrap gap-4 items-end">
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-slate-700">
-                Buscar
-              </label>
-              <input
-                type="text"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="mt-1 border rounded px-3 py-2 text-sm w-56"
-                placeholder="ID, huésped o habitación"
-              />
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-slate-700">
-                Estado
-              </label>
-              <select
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(e.target.value as "" | BookingStatus)
-                }
-                className="mt-1 border rounded px-3 py-2 text-sm w-44"
-              >
-                <option value="">Todos</option>
-                <option value="pending">Pendiente</option>
-                <option value="confirmed">Confirmada</option>
-                <option value="checked_in">Check-in</option>
-                <option value="checked_out">Check-out</option>
-                <option value="cancelled">Cancelada</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-slate-700">
-                Desde
-              </label>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="mt-1 border rounded px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-slate-700">
-                Hasta
-              </label>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="mt-1 border rounded px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => loadBookings()}
-              >
-                Refrescar
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setSearchText("");
-                  setStatusFilter("");
-                  setDateFrom("");
-                  setDateTo("");
-                }}
-              >
-                Limpiar filtros
-              </Button>
-            </div>
-          </form>
         </CardBody>
       </Card>
 
@@ -311,32 +236,94 @@ export default function Reservations() {
         </Card>
       )}
 
+      {/* Filtros */}
+      <Card>
+        <CardBody>
+          <form className="flex flex-wrap gap-4 items-end">
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700">
+                Buscar por huésped
+              </label>
+              <input
+                type="text"
+                value={filterGuest}
+                onChange={(e) => setFilterGuest(e.target.value)}
+                className="mt-1 border rounded px-3 py-2 text-sm w-60"
+                placeholder="Nombre del huésped"
+              />
+            </div>
+
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700">
+                Estado de pago
+              </label>
+              <select
+                value={filterPaymentStatus}
+                onChange={(e) =>
+                  setFilterPaymentStatus(
+                    e.target.value as "" | "none" | "partial" | "full"
+                  )
+                }
+                className="mt-1 border rounded px-3 py-2 text-sm w-52"
+              >
+                <option value="">Todos</option>
+                <option value="none">Sin pagos</option>
+                <option value="partial">Parcialmente pagada</option>
+                <option value="full">Totalmente pagada</option>
+              </select>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setFilterGuest("");
+                  setFilterPaymentStatus("");
+                }}
+              >
+                Limpiar filtros
+              </Button>
+            </div>
+          </form>
+        </CardBody>
+      </Card>
+
       {/* Tabla de reservas */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">
                     ID
                   </th>
-                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">
                     Huésped
                   </th>
-                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">
                     Habitación
                   </th>
-                  <th className="px-4 py-2 text-left font-medium text-slate-700">
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">
                     Fechas
                   </th>
-                  <th className="px-4 py-2 text-right font-medium text-slate-700">
-                    Total
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">
+                    Total reserva
                   </th>
-                  <th className="px-4 py-2 text-left font-medium text-slate-700">
-                    Estado
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">
+                    Pagado
                   </th>
-                  <th className="px-4 py-2 text-right font-medium text-slate-700">
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">
+                    Pendiente
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">
+                    Estado reserva
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">
+                    Estado de pago
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">
                     Acciones
                   </th>
                 </tr>
@@ -345,73 +332,108 @@ export default function Reservations() {
                 {filteredBookings.length === 0 && !loading && (
                   <tr>
                     <td
-                      colSpan={7}
-                      className="px-4 py-6 text-center text-slate-500"
+                      colSpan={10}
+                      className="px-4 py-6 text-center text-gray-500"
                     >
-                      No hay reservas que coincidan con los filtros.
+                      {bookings.length === 0
+                        ? "No hay reservas registradas."
+                        : "No hay reservas que coincidan con los filtros."}
                     </td>
                   </tr>
                 )}
 
-                {filteredBookings.map((b) => (
-                  <tr key={b.id} className="border-t last:border-b">
-                    <td className="px-4 py-2 align-top">{b.id}</td>
-                    <td className="px-4 py-2 align-top">
-                      <div className="flex flex-col">
-                        <span>{b.guest?.name ?? "-"}</span>
-                        {b.guest?.email && (
-                          <span className="text-xs text-slate-500">
-                            {b.guest.email}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2 align-top">
-                      {b.room
-                        ? `Hab ${b.room.number} (piso ${b.room.floor})${
-                            b.room.roomType
-                              ? ` · ${b.room.roomType.name}`
-                              : ""
-                          }`
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-2 align-top">
-                      {formatDate(b.checkIn)} → {formatDate(b.checkOut)}
-                    </td>
-                    <td className="px-4 py-2 align-top text-right">
-                      {formatCurrency(b.totalPrice)}
-                    </td>
-                    <td className="px-4 py-2 align-top">
-                      <Badge variant={getStatusVariant(b.status)}>
-                        {getStatusLabel(b.status)}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-2 align-top text-right space-x-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="text-xs px-3 py-1"
-                        disabled
-                      >
-                        Ver
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="text-xs px-3 py-1"
-                        disabled
-                      >
-                        Editar
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredBookings.map((booking) => {
+                  const paymentsForBooking = payments.filter(
+                    (p) =>
+                      p.bookingId === booking.id && p.status === "completed"
+                  );
+                  const totalPaid = paymentsForBooking.reduce(
+                    (sum, p) => sum + p.amount,
+                    0
+                  );
+                  const remaining =
+                    booking.totalPrice != null
+                      ? booking.totalPrice - totalPaid
+                      : 0;
+
+                  let paymentStatusLabel = "Sin pagos";
+                  let paymentStatusVariant: "success" | "warning" | "danger" =
+                    "danger";
+
+                  if (totalPaid <= 0) {
+                    paymentStatusLabel = "Sin pagos";
+                    paymentStatusVariant = "danger";
+                  } else if (remaining > 0) {
+                    paymentStatusLabel = "Parcialmente pagada";
+                    paymentStatusVariant = "warning";
+                  } else {
+                    paymentStatusLabel = "Totalmente pagada";
+                    paymentStatusVariant = "success";
+                  }
+
+                  return (
+                    <tr key={booking.id} className="border-t last:border-b">
+                      <td className="px-4 py-2 align-top">{booking.id}</td>
+                      <td className="px-4 py-2 align-top">
+                        {booking.guest?.name || "-"}
+                      </td>
+                      <td className="px-4 py-2 align-top">
+                        {booking.room
+                          ? `Hab ${booking.room.number} (piso ${booking.room.floor})`
+                          : "-"}
+                      </td>
+                      <td className="px-4 py-2 align-top">
+                        {formatDate(booking.checkIn)} →{" "}
+                        {formatDate(booking.checkOut)}
+                      </td>
+                      <td className="px-4 py-2 align-top text-right">
+                        {formatCurrency(booking.totalPrice ?? 0)}
+                      </td>
+                      <td className="px-4 py-2 align-top text-right">
+                        {formatCurrency(totalPaid)}
+                      </td>
+                      <td className="px-4 py-2 align-top text-right">
+                        {formatCurrency(remaining)}
+                      </td>
+                      <td className="px-4 py-2 align-top">
+                        <Badge variant={getBookingStatusVariant(booking.status)}>
+                          {getBookingStatusLabel(booking.status)}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2 align-top">
+                        <Badge variant={paymentStatusVariant}>
+                          {paymentStatusLabel}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2 align-top text-right space-x-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="text-xs px-3 py-1"
+                          onClick={() =>
+                            navigate(`/reservations/${booking.id}`)
+                          }
+                        >
+                          Ver detalle
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="text-xs px-3 py-1"
+                          onClick={() => navigate("/payments")}
+                        >
+                          Gestionar pagos
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {loading && (
                   <tr>
                     <td
-                      colSpan={7}
-                      className="px-4 py-4 text-center text-slate-500"
+                      colSpan={10}
+                      className="px-4 py-4 text-center text-gray-500"
                     >
                       Cargando...
                     </td>

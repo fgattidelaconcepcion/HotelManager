@@ -1,133 +1,99 @@
 import { Request, Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
-import { Prisma, BookingStatus } from "@prisma/client";
 
-// ======================================
-// Esquemas de validación
-// ======================================
+/* =====================================
+      STATUS LOCAL
+===================================== */
 
-// Esquema para crear pago
-const paymentSchema = z.object({
+// Enum de estados que usamos en la app
+const paymentStatusEnum = z.enum(["pending", "completed", "failed"]);
+type PaymentStatus = z.infer<typeof paymentStatusEnum>;
+
+/* =====================================
+      VALIDACIÓN ZOD
+===================================== */
+
+const basePaymentSchema = z.object({
   bookingId: z.preprocess((v) => Number(v), z.number().int().positive()),
   amount: z.preprocess((v) => Number(v), z.number().positive()),
-  method: z.enum(["cash", "card", "transfer"]).default("cash"),
-  status: z.enum(["pending", "completed", "failed"]).default("pending"),
+  method: z.enum(["cash", "card", "transfer"]),
+  status: paymentStatusEnum,
 });
 
-// Para actualizar, todos opcionales
-const updatePaymentSchema = paymentSchema.partial();
+const createPaymentSchema = basePaymentSchema;
+const updatePaymentSchema = basePaymentSchema.partial();
 
-// ======================================
-// Helpers
-// ======================================
+/* =====================================
+      HELPERS
+===================================== */
 
-/**
- * Recalcula el total pagado para una reserva y, si corresponde,
- * actualiza el estado de la Booking.
- *
- * Regla:
- * - Solo tocamos reservas en estado pending o confirmed.
- * - Si total pagado >= totalPrice  -> confirmed
- * - Si total pagado <  totalPrice  -> pending
- */
-const syncBookingStatusWithPayments = async (bookingId: number) => {
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    include: { payments: true },
+// Calcula el total pagado (pagos COMPLETADOS) para una reserva, excluyendo opcionalmente un pago
+async function getCompletedPaidForBooking(
+  bookingId: number,
+  excludePaymentId?: number
+) {
+  const where: any = {
+    bookingId,
+    status: "completed", // usamos string directo, sin enum de Prisma
+  };
+
+  if (excludePaymentId) {
+    where.id = { not: excludePaymentId };
+  }
+
+  const result = await prisma.payment.aggregate({
+    where,
+    _sum: {
+      amount: true,
+    },
   });
 
-  if (!booking) return;
+  return result._sum.amount ?? 0;
+}
 
-  const totalPaid = booking.payments
-    .filter((p) => p.status === "completed")
-    .reduce((sum, p) => sum + p.amount, 0);
+/* =====================================
+      CONTROLADORES
+===================================== */
 
-  if (
-    booking.status !== BookingStatus.pending &&
-    booking.status !== BookingStatus.confirmed
-  ) {
-    // No modificamos otros estados (cancelled, checked_in, checked_out, etc.)
-    return;
-  }
-
-  let newStatus: BookingStatus;
-  if (totalPaid >= booking.totalPrice) {
-    newStatus = BookingStatus.confirmed;
-  } else {
-    newStatus = BookingStatus.pending;
-  }
-
-  if (newStatus !== booking.status) {
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: newStatus },
-    });
-  }
-};
-
-/**
- * Obtiene una reserva con sus pagos y calcula el total pagado
- * (solo pagos con status = "completed").
- */
-const getBookingWithTotals = async (bookingId: number) => {
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    include: { payments: true },
-  });
-
-  if (!booking) return null;
-
-  const totalPaid = booking.payments
-    .filter((p) => p.status === "completed")
-    .reduce((sum, p) => sum + p.amount, 0);
-
-  return { booking, totalPaid };
-};
-
-// ======================================
-// Controladores
-// ======================================
-
-/* ============================================================
-   GET /api/payments
-   Opcionalmente filtrado por bookingId y/o status
-   ============================================================ */
+// GET /api/payments
 export const getAllPayments = async (req: Request, res: Response) => {
   try {
     const { bookingId, status } = req.query;
 
-    const where: Prisma.PaymentWhereInput = {};
+    const where: any = {};
 
-    if (bookingId) {
-      const id = Number(bookingId);
-      if (!isNaN(id)) {
-        where.bookingId = id;
-      }
+    if (bookingId && !isNaN(Number(bookingId))) {
+      where.bookingId = Number(bookingId);
     }
 
     if (status && typeof status === "string") {
-      where.status = status;
+      const allowedStatuses: PaymentStatus[] = [
+        "pending",
+        "completed",
+        "failed",
+      ];
+      if (allowedStatuses.includes(status as PaymentStatus)) {
+        where.status = status;
+      }
     }
 
     const payments = await prisma.payment.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: {
+        createdAt: "desc",
+      },
       include: {
         booking: {
           include: {
+            room: { include: { roomType: true } },
             guest: true,
-            room: {
-              include: {
-                roomType: true,
-              },
-            },
           },
         },
       },
     });
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       data: payments,
     });
@@ -140,17 +106,14 @@ export const getAllPayments = async (req: Request, res: Response) => {
   }
 };
 
-/* ============================================================
-   GET /api/payments/:id
-   ============================================================ */
+// GET /api/payments/:id
 export const getPaymentById = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        error: "ID inválido",
-      });
+      return res
+        .status(400)
+        .json({ success: false, error: "ID de pago inválido" });
     }
 
     const payment = await prisma.payment.findUnique({
@@ -158,25 +121,20 @@ export const getPaymentById = async (req: Request, res: Response) => {
       include: {
         booking: {
           include: {
+            room: { include: { roomType: true } },
             guest: true,
-            room: {
-              include: {
-                roomType: true,
-              },
-            },
           },
         },
       },
     });
 
     if (!payment) {
-      return res.status(404).json({
-        success: false,
-        error: "Pago no encontrado",
-      });
+      return res
+        .status(404)
+        .json({ success: false, error: "Pago no encontrado" });
     }
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       data: payment,
     });
@@ -184,103 +142,16 @@ export const getPaymentById = async (req: Request, res: Response) => {
     console.error("Error en getPaymentById:", error);
     return res.status(500).json({
       success: false,
-      error: "Error al obtener pago",
+      error: "Error al obtener el pago",
     });
   }
 };
 
-/* ============================================================
-   POST /api/payments
-   Crea un pago y, si corresponde, actualiza estado de la reserva
-   y bloquea sobrepagos.
-   ============================================================ */
+// POST /api/payments
 export const createPayment = async (req: Request, res: Response) => {
   try {
-    const parsed = paymentSchema.safeParse(req.body);
+    const parsed = createPaymentSchema.safeParse(req.body);
 
-    if (!parsed.success) {
-      return res.status(400).json({
-        success: false,
-        error: "Datos inválidos",
-        details: parsed.error.flatten(),
-      });
-    }
-
-    const { bookingId, amount, method, status } = parsed.data;
-
-    // Verificar que la reserva exista y calcular totales pagados
-    const bookingTotals = await getBookingWithTotals(bookingId);
-    if (!bookingTotals) {
-      return res.status(404).json({
-        success: false,
-        error: "Reserva no encontrada",
-      });
-    }
-
-    const { booking, totalPaid } = bookingTotals;
-
-    // Si el pago nuevo es "completed", validamos que no supere el total
-    if (status === "completed") {
-      const newTotalPaid = totalPaid + amount;
-      if (newTotalPaid > booking.totalPrice) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "La reserva ya está completamente pagada o el monto supera el total de la reserva.",
-        });
-      }
-    }
-
-    const payment = await prisma.payment.create({
-      data: {
-        bookingId,
-        amount,
-        method,
-        status,
-      },
-    });
-
-    // Recalcular estado de la reserva en base a los pagos
-    await syncBookingStatusWithPayments(bookingId);
-
-    return res.status(201).json({
-      success: true,
-      data: payment,
-    });
-  } catch (error) {
-    console.error("Error en createPayment:", error);
-
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      return res.status(400).json({
-        success: false,
-        error: "Error de base de datos al crear pago",
-        code: error.code,
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      error: "Error al crear pago",
-    });
-  }
-};
-
-/* ============================================================
-   PUT /api/payments/:id
-   Actualiza un pago y vuelve a sincronizar estado de la reserva.
-   También evita sobrepagos.
-   ============================================================ */
-export const updatePayment = async (req: Request, res: Response) => {
-  try {
-    const id = Number(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        error: "ID inválido",
-      });
-    }
-
-    const parsed = updatePaymentSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
@@ -291,129 +162,186 @@ export const updatePayment = async (req: Request, res: Response) => {
 
     const data = parsed.data;
 
+    // 1) Verificar que la reserva exista
+    const booking = await prisma.booking.findUnique({
+      where: { id: data.bookingId },
+    });
+
+    if (!booking) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Reserva asociada no encontrada" });
+    }
+
+    // 2) Si el pago se marca como COMPLETED, validar sobrepago
+    if (data.status === "completed") {
+      const alreadyPaid = await getCompletedPaidForBooking(data.bookingId);
+      const newTotalPaid = alreadyPaid + data.amount;
+
+      if (newTotalPaid > booking.totalPrice) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "El monto del pago supera el total de la reserva. No se puede registrar este pago.",
+        });
+      }
+    }
+
+    // 3) Crear el pago
+    const payment = await prisma.payment.create({
+      data: {
+        bookingId: data.bookingId,
+        amount: data.amount,
+        method: data.method,
+        status: data.status,
+      },
+      include: {
+        booking: {
+          include: {
+            room: { include: { roomType: true } },
+            guest: true,
+          },
+        },
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: payment,
+    });
+  } catch (error) {
+    console.error("Error en createPayment:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Error al crear el pago",
+    });
+  }
+};
+
+// PUT /api/payments/:id
+export const updatePayment = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "ID de pago inválido" });
+    }
+
+    const parsed = updatePaymentSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: "Datos inválidos",
+        details: parsed.error.flatten(),
+      });
+    }
+
     const existing = await prisma.payment.findUnique({
       where: { id },
     });
 
     if (!existing) {
-      return res.status(404).json({
-        success: false,
-        error: "Pago no encontrado",
-      });
+      return res
+        .status(404)
+        .json({ success: false, error: "Pago no encontrado" });
     }
 
-    const finalBookingId = data.bookingId ?? existing.bookingId;
+    const booking = await prisma.booking.findUnique({
+      where: { id: existing.bookingId },
+    });
 
-    // Obtenemos la reserva con todos sus pagos
-    const bookingTotals = await getBookingWithTotals(finalBookingId);
-    if (!bookingTotals) {
-      return res.status(404).json({
-        success: false,
-        error: "Reserva no encontrada",
-      });
+    if (!booking) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Reserva asociada no encontrada" });
     }
 
-    const { booking, totalPaid } = bookingTotals;
+    // Nuevos valores (o actuales si no se cambiaron)
+    const nextAmount = parsed.data.amount ?? existing.amount;
+    const nextStatus = parsed.data.status ?? (existing.status as PaymentStatus);
 
-    // Calculamos el total pagado sin contar este pago
-    const totalPaidExcludingCurrent =
-      totalPaid -
-      (existing.status === "completed" ? existing.amount : 0);
-
-    const nextStatus = data.status ?? existing.status;
-    const nextAmount = data.amount ?? existing.amount;
-
+    // Validar sobrepago SOLO si el nuevo estado queda como COMPLETED
     if (nextStatus === "completed") {
-      const newTotalPaid = totalPaidExcludingCurrent + nextAmount;
+      // total de pagos completados EXCLUYENDO este pago
+      const alreadyPaid = await getCompletedPaidForBooking(
+        existing.bookingId,
+        existing.id
+      );
+
+      const newTotalPaid = alreadyPaid + nextAmount;
+
       if (newTotalPaid > booking.totalPrice) {
         return res.status(400).json({
           success: false,
           error:
-            "La reserva ya está completamente pagada o el monto supera el total de la reserva.",
+            "El monto total de pagos completados supera el total de la reserva. No se puede actualizar este pago.",
         });
       }
     }
 
     const updated = await prisma.payment.update({
       where: { id },
-      data,
+      data: {
+        amount: parsed.data.amount ?? existing.amount,
+        method: parsed.data.method ?? existing.method,
+        status: parsed.data.status ?? existing.status,
+      },
+      include: {
+        booking: {
+          include: {
+            room: { include: { roomType: true } },
+            guest: true,
+          },
+        },
+      },
     });
 
-    await syncBookingStatusWithPayments(finalBookingId);
-
-    return res.json({
+    return res.status(200).json({
       success: true,
       data: updated,
     });
   } catch (error) {
     console.error("Error en updatePayment:", error);
-
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      return res.status(400).json({
-        success: false,
-        error: "Error de base de datos al actualizar pago",
-        code: error.code,
-      });
-    }
-
     return res.status(500).json({
       success: false,
-      error: "Error al actualizar pago",
+      error: "Error al actualizar el pago",
     });
   }
 };
 
-/* ============================================================
-   DELETE /api/payments/:id
-   Elimina un pago y vuelve a sincronizar la reserva.
-   ============================================================ */
+// DELETE /api/payments/:id
 export const deletePayment = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
+
     if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        error: "ID inválido",
-      });
+      return res
+        .status(400)
+        .json({ success: false, error: "ID de pago inválido" });
     }
 
-    const existing = await prisma.payment.findUnique({
+    await prisma.payment.delete({
       where: { id },
     });
 
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        error: "Pago no encontrado",
-      });
-    }
-
-    const deleted = await prisma.payment.delete({
-      where: { id },
-    });
-
-    // Recalcular el estado de la reserva después de eliminar el pago
-    await syncBookingStatusWithPayments(existing.bookingId);
-
-    return res.json({
+    return res.status(200).json({
       success: true,
-      data: deleted,
+      message: "Pago eliminado correctamente",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error en deletePayment:", error);
 
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2025") {
-        return res.status(404).json({
-          success: false,
-          error: "Pago no encontrado",
-        });
-      }
+    if (error.code === "P2025") {
+      return res
+        .status(404)
+        .json({ success: false, error: "Pago no encontrado" });
     }
 
     return res.status(500).json({
       success: false,
-      error: "Error al eliminar pago",
+      error: "Error al eliminar el pago",
     });
   }
 };

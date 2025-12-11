@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -21,6 +22,8 @@ export interface Room {
 }
 
 export default function Rooms() {
+  const navigate = useNavigate();
+
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +61,15 @@ export default function Rooms() {
       currency: "UYU",
       minimumFractionDigits: 0,
     }).format(value);
+  };
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return "-";
+    try {
+      return new Date(value).toLocaleDateString();
+    } catch {
+      return value;
+    }
   };
 
   const floors = useMemo(
@@ -108,6 +120,41 @@ export default function Rooms() {
   const roomsWithType = rooms.filter((r) => !!r.roomType).length;
   const roomsWithoutType = totalRooms - roomsWithType;
 
+  const handleDelete = async (room: Room) => {
+    const ok = window.confirm(
+      `¿Seguro que quieres eliminar la habitación ${room.number} (ID ${room.id})?`
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      await api.delete(`/rooms/${room.id}`);
+      await loadRooms();
+    } catch (err: any) {
+      console.error("Error deleting room", err);
+      setError(
+        err?.response?.data?.error ||
+          "No se pudo eliminar la habitación. Intenta nuevamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Última actualización aproximada
+  const lastUpdated = useMemo(() => {
+    if (!rooms.length) return null;
+    const sorted = rooms
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt ?? b.createdAt ?? "").getTime() -
+          new Date(a.updatedAt ?? a.createdAt ?? "").getTime()
+      );
+    return sorted[0].updatedAt ?? sorted[0].createdAt ?? null;
+  }, [rooms]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -115,8 +162,8 @@ export default function Rooms() {
         title="Habitaciones"
         description="Gestiona las habitaciones del hotel."
         actions={
-          <Button disabled className="opacity-70 cursor-not-allowed">
-            Nueva habitación (pronto)
+          <Button onClick={() => navigate("/rooms/new")}>
+            Nueva habitación
           </Button>
         }
       />
@@ -124,7 +171,7 @@ export default function Rooms() {
       {/* Resumen */}
       <Card>
         <CardBody>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div>
               <p className="text-xs text-slate-500">Total de habitaciones</p>
               <p className="text-lg font-semibold mt-1">{totalRooms}</p>
@@ -136,6 +183,12 @@ export default function Rooms() {
             <div>
               <p className="text-xs text-slate-500">Sin tipo asignado</p>
               <p className="text-lg font-semibold mt-1">{roomsWithoutType}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Última actualización</p>
+              <p className="text-sm mt-1 text-slate-600">
+                {lastUpdated ? formatDate(lastUpdated) : "-"}
+              </p>
             </div>
           </div>
         </CardBody>
@@ -194,7 +247,7 @@ export default function Rooms() {
               </select>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-2 md:mt-6">
               <Button type="button" variant="secondary" onClick={loadRooms}>
                 Refrescar
               </Button>
@@ -291,9 +344,18 @@ export default function Rooms() {
                         type="button"
                         variant="ghost"
                         className="text-xs px-3 py-1"
-                        disabled
+                        onClick={() => navigate(`/rooms/${room.id}`)}
                       >
-                        Editar
+                        Ver / Editar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        className="text-xs px-3 py-1"
+                        onClick={() => handleDelete(room)}
+                        disabled={loading}
+                      >
+                        Eliminar
                       </Button>
                     </td>
                   </tr>

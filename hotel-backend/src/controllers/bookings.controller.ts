@@ -377,10 +377,52 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
       });
     }
 
+    const nextStatus = parsed.data.status;
+
+    // 1) Traer la reserva actual
+    const existing = await prisma.booking.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Reserva no encontrada" });
+    }
+
+    const currentStatus = existing.status;
+
+    // 2) Reglas de transición de estado
+    if (currentStatus === "cancelled" || currentStatus === "checked_out") {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Esta reserva ya está finalizada y no puede cambiar de estado.",
+      });
+    }
+
+    let allowedNextStatuses: BookingStatus[] = [];
+
+    if (currentStatus === "pending") {
+      allowedNextStatuses = ["confirmed", "cancelled"];
+    } else if (currentStatus === "confirmed") {
+      allowedNextStatuses = ["checked_in", "cancelled"];
+    } else if (currentStatus === "checked_in") {
+      allowedNextStatuses = ["checked_out"];
+    }
+
+    if (!allowedNextStatuses.includes(nextStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: `No se puede cambiar el estado de '${currentStatus}' a '${nextStatus}'.`,
+      });
+    }
+
+    // 3) Actualizar estado si es válido
     const updated = await prisma.booking.update({
       where: { id },
       data: {
-        status: parsed.data.status,
+        status: nextStatus,
       },
       include: {
         room: { include: { roomType: true } },
@@ -408,6 +450,7 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 // DELETE /api/bookings/:id
 export const deleteBooking = async (req: Request, res: Response) => {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -92,6 +93,9 @@ const emptyForm: PaymentFormState = {
 };
 
 export default function Payments() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
   const [payments, setPayments] = useState<Payment[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
 
@@ -105,6 +109,9 @@ export default function Payments() {
 
   const [filterBookingId, setFilterBookingId] = useState("");
   const [filterStatus, setFilterStatus] = useState<"" | PaymentStatus>("");
+
+  // Para que sólo se auto-abra una vez desde /payments?bookingId=...
+  const [autoOpenedFromBooking, setAutoOpenedFromBooking] = useState(false);
 
   const loadPayments = async () => {
     try {
@@ -152,6 +159,30 @@ export default function Payments() {
     loadBookings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-abrir modal si venimos desde /payments?bookingId=...
+  useEffect(() => {
+    const bookingIdParam = searchParams.get("bookingId");
+    if (!bookingIdParam) return;
+    if (autoOpenedFromBooking) return;
+
+    const bookingIdNum = Number(bookingIdParam);
+    if (!bookingIdNum || Number.isNaN(bookingIdNum)) return;
+
+    // Esperar a tener las reservas cargadas
+    if (loadingBookings) return;
+
+    const exists = bookings.some((b) => b.id === bookingIdNum);
+    if (!exists) return;
+
+    setForm((prev) => ({
+      ...prev,
+      bookingId: String(bookingIdNum),
+    }));
+    setIsEditing(false);
+    setShowModal(true);
+    setAutoOpenedFromBooking(true);
+  }, [searchParams, bookings, loadingBookings, autoOpenedFromBooking]);
 
   const handleOpenCreate = () => {
     setIsEditing(false);
@@ -372,13 +403,36 @@ export default function Payments() {
   const isBookingFullyPaid =
     !!selectedBooking && remainingForSelected <= 0;
 
+  const handleFillRemainingAmount = () => {
+    if (!selectedBooking) return;
+    if (remainingForSelected <= 0) return;
+
+    setForm((prev) => ({
+      ...prev,
+      amount: String(remainingForSelected),
+    }));
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
         title="Pagos"
         description="Gestiona los pagos asociados a las reservas."
-        actions={<Button onClick={handleOpenCreate}>Nuevo pago</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => navigate("/reservations/new")}
+            >
+              Nueva reserva
+            </Button>
+            <Button type="button" onClick={handleOpenCreate}>
+              Nuevo pago
+            </Button>
+          </div>
+        }
       />
 
       {/* Resumen de totales */}
@@ -642,6 +696,34 @@ export default function Payments() {
                     Debe existir una reserva con este ID.
                   </p>
 
+                  {/* Acciones rápidas: nueva reserva, huésped, habitación */}
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-xs px-2 py-1"
+                      onClick={() => navigate("/reservations/new")}
+                    >
+                      Nueva reserva
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-xs px-2 py-1"
+                      onClick={() => navigate("/guests/new")}
+                    >
+                      Nuevo huésped
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-xs px-2 py-1"
+                      onClick={() => navigate("/rooms/new")}
+                    >
+                      Nueva habitación
+                    </Button>
+                  </div>
+
                   {selectedBooking && (
                     <div className="mt-2 text-xs text-gray-600 space-y-1 border rounded p-2 bg-gray-50">
                       <p>
@@ -656,16 +738,35 @@ export default function Payments() {
                         <span className="font-semibold">Pendiente:</span>{" "}
                         {formatCurrency(remainingForSelected)}
                       </p>
+                      <p>
+                        <span className="font-semibold">Estado:</span>{" "}
+                        {isBookingFullyPaid
+                          ? "✅ Completamente pagada"
+                          : "🟡 Con saldo pendiente"}
+                      </p>
+
+                      {!isBookingFullyPaid && remainingForSelected > 0 && (
+                        <div className="pt-2">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="text-xs px-2 py-1"
+                            onClick={handleFillRemainingAmount}
+                          >
+                            Usar saldo pendiente como monto
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
 
-                {!isEditing && isBookingFullyPaid && (
-                  <p className="mt-2 text-xs text-red-600">
-                    Esta reserva ya está completamente pagada. No puedes
-                    registrar más pagos.
-                  </p>
-                )}
+                  {!isEditing && isBookingFullyPaid && (
+                    <p className="mt-2 text-xs text-red-600">
+                      Esta reserva ya está completamente pagada. No puedes
+                      registrar más pagos completados.
+                    </p>
+                  )}
+                </div>
 
                 {/* Monto */}
                 <div>
