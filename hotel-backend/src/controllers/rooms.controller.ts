@@ -135,6 +135,31 @@ export const createRoom = async (req: Request, res: Response) => {
   }
 };
 
+export const getRoomById = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, error: "Invalid room ID." });
+    }
+
+    const room = await prisma.room.findUnique({
+      where: { id },
+      include: { roomType: true },
+    });
+
+    if (!room) {
+      return res.status(404).json({ success: false, error: "Room not found." });
+    }
+
+    return res.status(200).json({ success: true, data: room });
+  } catch (error) {
+    console.error("Error en getRoomById:", error);
+    return res.status(500).json({ success: false, error: "Error getting room" });
+  }
+};
+
+
 /* 
         ACTUALIZAR HABITACIÓN
         PUT /api/rooms/:id

@@ -38,7 +38,7 @@ export default function Guests() {
       console.error("Error loading guests", err);
       setError(
         err?.response?.data?.error ||
-          "Hubo un error al cargar los huéspedes. Intenta nuevamente."
+          "There was an error loading guests. Please try again."
       );
     } finally {
       setLoading(false);
@@ -88,7 +88,7 @@ export default function Guests() {
   const formatDate = (value?: string | null) => {
     if (!value) return "-";
     try {
-      return new Date(value).toLocaleDateString();
+      return new Date(value).toLocaleDateString("en-US");
     } catch {
       return value;
     }
@@ -96,7 +96,7 @@ export default function Guests() {
 
   const handleDelete = async (guest: Guest) => {
     const ok = window.confirm(
-      `¿Seguro que quieres eliminar al huésped "${guest.name}" (ID ${guest.id})?`
+      `Are you sure you want to delete guest "${guest.name}" (ID ${guest.id})?`
     );
     if (!ok) return;
 
@@ -109,7 +109,7 @@ export default function Guests() {
       console.error("Error deleting guest", err);
       setError(
         err?.response?.data?.error ||
-          "No se pudo eliminar el huésped. Intenta nuevamente."
+          "Could not delete the guest. Please try again."
       );
     } finally {
       setLoading(false);
@@ -120,33 +120,31 @@ export default function Guests() {
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
-        title="Huéspedes"
-        description="Gestiona los huéspedes del hotel."
+        title="Guests"
+        description="Manage your hotel guests."
         actions={
-          <Button onClick={() => navigate("/guests/new")}>
-            Nuevo huésped
-          </Button>
+          <Button onClick={() => navigate("/guests/new")}>New guest</Button>
         }
       />
 
-      {/* Resumen */}
+      {/* Summary */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-4">
             <div>
-              <p className="text-xs text-slate-500">Total de huéspedes</p>
+              <p className="text-xs text-slate-500">Total guests</p>
               <p className="text-lg font-semibold mt-1">{totalGuests}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Con email registrado</p>
+              <p className="text-xs text-slate-500">With email</p>
               <p className="text-lg font-semibold mt-1">{guestsWithEmail}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Con teléfono registrado</p>
+              <p className="text-xs text-slate-500">With phone</p>
               <p className="text-lg font-semibold mt-1">{guestsWithPhone}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Última actualización</p>
+              <p className="text-xs text-slate-500">Last updated</p>
               <p className="text-sm mt-1 text-slate-600">
                 {formatDate(
                   guests
@@ -163,20 +161,20 @@ export default function Guests() {
         </CardBody>
       </Card>
 
-      {/* Filtros */}
+      {/* Filters */}
       <Card>
         <CardBody>
           <form className="flex flex-wrap gap-4 items-end">
             <div className="flex flex-col">
               <label className="text-sm font-medium text-slate-700">
-                Buscar
+                Search
               </label>
               <input
                 type="text"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 className="mt-1 border rounded px-3 py-2 text-sm w-64"
-                placeholder="Nombre, email, teléfono, documento..."
+                placeholder="Name, email, phone, document..."
               />
             </div>
 
@@ -188,7 +186,7 @@ export default function Guests() {
                   onChange={(e) => setOnlyWithEmail(e.target.checked)}
                   className="h-4 w-4"
                 />
-                Solo con email
+                Only with email
               </label>
 
               <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -198,13 +196,13 @@ export default function Guests() {
                   onChange={(e) => setOnlyWithPhone(e.target.checked)}
                   className="h-4 w-4"
                 />
-                Solo con teléfono
+                Only with phone
               </label>
             </div>
 
             <div className="flex gap-2 mt-4 md:mt-6">
               <Button type="button" variant="secondary" onClick={loadGuests}>
-                Refrescar
+                Refresh
               </Button>
               <Button
                 type="button"
@@ -215,14 +213,14 @@ export default function Guests() {
                   setOnlyWithPhone(false);
                 }}
               >
-                Limpiar filtros
+                Clear filters
               </Button>
             </div>
           </form>
         </CardBody>
       </Card>
 
-      {/* Mensajes de estado */}
+      {/* Status messages */}
       {error && (
         <Card>
           <CardBody>
@@ -233,7 +231,7 @@ export default function Guests() {
         </Card>
       )}
 
-      {/* Tabla de huéspedes */}
+      {/* Guests table */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
@@ -244,22 +242,22 @@ export default function Guests() {
                     ID
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-slate-700">
-                    Nombre
+                    Name
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-slate-700">
                     Email
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-slate-700">
-                    Teléfono
+                    Phone
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-slate-700">
-                    Documento
+                    Document
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-slate-700">
-                    Dirección
+                    Address
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-slate-700">
-                    Acciones
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -270,7 +268,7 @@ export default function Guests() {
                       colSpan={7}
                       className="px-4 py-6 text-center text-slate-500"
                     >
-                      No hay huéspedes que coincidan con los filtros.
+                      No guests match your filters.
                     </td>
                   </tr>
                 )}
@@ -279,18 +277,12 @@ export default function Guests() {
                   <tr key={g.id} className="border-t last:border-b">
                     <td className="px-4 py-2 align-top">{g.id}</td>
                     <td className="px-4 py-2 align-top">{g.name}</td>
-                    <td className="px-4 py-2 align-top">
-                      {g.email || "-"}
-                    </td>
-                    <td className="px-4 py-2 align-top">
-                      {g.phone || "-"}
-                    </td>
+                    <td className="px-4 py-2 align-top">{g.email || "-"}</td>
+                    <td className="px-4 py-2 align-top">{g.phone || "-"}</td>
                     <td className="px-4 py-2 align-top">
                       {g.documentNumber || "-"}
                     </td>
-                    <td className="px-4 py-2 align-top">
-                      {g.address || "-"}
-                    </td>
+                    <td className="px-4 py-2 align-top">{g.address || "-"}</td>
                     <td className="px-4 py-2 align-top text-right space-x-2">
                       <Button
                         type="button"
@@ -298,7 +290,7 @@ export default function Guests() {
                         className="text-xs px-3 py-1"
                         onClick={() => navigate(`/guests/${g.id}`)}
                       >
-                        Ver / Editar
+                        View / Edit
                       </Button>
                       <Button
                         type="button"
@@ -307,7 +299,7 @@ export default function Guests() {
                         onClick={() => handleDelete(g)}
                         disabled={loading}
                       >
-                        Eliminar
+                        Delete
                       </Button>
                     </td>
                   </tr>
@@ -319,7 +311,7 @@ export default function Guests() {
                       colSpan={7}
                       className="px-4 py-4 text-center text-slate-500"
                     >
-                      Cargando...
+                      Loading...
                     </td>
                   </tr>
                 )}

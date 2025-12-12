@@ -4,6 +4,7 @@ import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { toast } from "sonner";
 
 interface RoomType {
   id: number;
@@ -15,7 +16,7 @@ interface RoomFormState {
   number: string;
   floor: string;
   description: string;
-  roomTypeId: string; // string para el select
+  roomTypeId: string;
 }
 
 const emptyForm: RoomFormState = {
@@ -28,7 +29,6 @@ const emptyForm: RoomFormState = {
 export default function RoomFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-
   const isEdit = !!id;
 
   const [form, setForm] = useState<RoomFormState>(emptyForm);
@@ -36,13 +36,9 @@ export default function RoomFormPage() {
   const [loading, setLoading] = useState(false);
   const [loadingRoom, setLoadingRoom] = useState(false);
   const [loadingRoomTypes, setLoadingRoomTypes] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleChange = (field: keyof RoomFormState, value: string) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
   const loadRoomTypes = async () => {
@@ -51,9 +47,8 @@ export default function RoomFormPage() {
       const res = await api.get("/room-types");
       const data = res.data?.data ?? res.data;
       setRoomTypes(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Error loading room types", err);
-      // no lo consideramos crítico, solo deja el select vacío
+    } catch {
+      toast.error("Could not load room types");
     } finally {
       setLoadingRoomTypes(false);
     }
@@ -62,14 +57,14 @@ export default function RoomFormPage() {
   const loadRoom = async () => {
     if (!id) return;
     const roomId = Number(id);
+
     if (Number.isNaN(roomId)) {
-      setError("ID de habitación inválido.");
+      toast.error("Invalid room ID");
       return;
     }
 
     try {
       setLoadingRoom(true);
-      setError(null);
       const res = await api.get(`/rooms/${roomId}`);
       const data = res.data?.data ?? res.data;
 
@@ -79,12 +74,8 @@ export default function RoomFormPage() {
         description: data.description ?? "",
         roomTypeId: data.roomType?.id != null ? String(data.roomType.id) : "",
       });
-    } catch (err: any) {
-      console.error("Error loading room", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo cargar la habitación. Intenta nuevamente."
-      );
+    } catch {
+      toast.error("Could not load the room");
     } finally {
       setLoadingRoom(false);
     }
@@ -105,18 +96,18 @@ export default function RoomFormPage() {
 
   const validateForm = () => {
     if (!form.number.trim()) {
-      setError("El número de habitación es obligatorio.");
+      toast.error("Room number is required");
       return false;
     }
 
     if (!form.floor.trim()) {
-      setError("El piso es obligatorio.");
+      toast.error("Floor is required");
       return false;
     }
 
     const floorNumber = Number(form.floor);
     if (Number.isNaN(floorNumber) || !Number.isInteger(floorNumber)) {
-      setError("El piso debe ser un número entero.");
+      toast.error("Floor must be a valid integer");
       return false;
     }
 
@@ -125,8 +116,6 @@ export default function RoomFormPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-
     if (!validateForm()) return;
 
     const payload: any = {
@@ -141,19 +130,16 @@ export default function RoomFormPage() {
       setLoading(true);
 
       if (isEdit && id) {
-        const roomId = Number(id);
-        await api.put(`/rooms/${roomId}`, payload);
+        await api.put(`/rooms/${Number(id)}`, payload);
+        toast.success("Room updated successfully");
       } else {
         await api.post("/rooms", payload);
+        toast.success("Room created successfully");
       }
 
       navigate("/rooms");
-    } catch (err: any) {
-      console.error("Error saving room", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo guardar la habitación. Revisa los datos e intenta nuevamente."
-      );
+    } catch {
+      toast.error("Could not save the room. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -166,64 +152,54 @@ export default function RoomFormPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={isEdit ? "Editar habitación" : "Nueva habitación"}
+        title={isEdit ? "Edit room" : "New room"}
         description={
           isEdit
-            ? "Modifica los datos de la habitación seleccionada."
-            : "Registra una nueva habitación en el sistema."
+            ? "Update the details of the selected room."
+            : "Create a new room in the system."
         }
         actions={
           <Button type="button" variant="ghost" onClick={handleCancel}>
-            Volver a habitaciones
+            Back to rooms
           </Button>
         }
       />
 
-      {error && (
-        <Card>
-          <CardBody>
-            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
-              {error}
-            </div>
-          </CardBody>
-        </Card>
-      )}
-
       <Card>
         <CardBody>
-          {(loadingRoom && isEdit) ? (
-            <p className="text-sm text-gray-500">Cargando datos...</p>
+          {loadingRoom && isEdit ? (
+            <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
               <p className="text-xs text-slate-500">
-                Los campos marcados con * son obligatorios.
+                Fields marked with * are required.
               </p>
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    Número de habitación *
+                    Room number *
                   </label>
                   <input
                     type="text"
                     value={form.number}
                     onChange={(e) => handleChange("number", e.target.value)}
                     className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                    placeholder="Ej: 101"
+                    placeholder="e.g. 101"
                     disabled={loading}
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    Piso *
+                    Floor *
                   </label>
                   <input
                     type="number"
                     value={form.floor}
                     onChange={(e) => handleChange("floor", e.target.value)}
                     className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                    placeholder="Ej: 1"
+                    placeholder="e.g. 1"
                     disabled={loading}
                   />
                 </div>
@@ -231,24 +207,26 @@ export default function RoomFormPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Tipo de habitación
+                  Room type
                 </label>
                 <select
                   value={form.roomTypeId}
-                  onChange={(e) => handleChange("roomTypeId", e.target.value)}
+                  onChange={(e) =>
+                    handleChange("roomTypeId", e.target.value)
+                  }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   disabled={loading || loadingRoomTypes}
                 >
                   <option value="">
                     {loadingRoomTypes
-                      ? "Cargando tipos..."
-                      : "Selecciona un tipo (opcional)"}
+                      ? "Loading room types..."
+                      : "Select a type (optional)"}
                   </option>
                   {roomTypes.map((rt) => (
                     <option key={rt.id} value={rt.id}>
-                      {rt.name}{" "}
+                      {rt.name}
                       {rt.basePrice != null
-                        ? `- base ${new Intl.NumberFormat("es-UY", {
+                        ? ` · ${new Intl.NumberFormat("en-UY", {
                             style: "currency",
                             currency: "UYU",
                             minimumFractionDigits: 0,
@@ -261,7 +239,7 @@ export default function RoomFormPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Descripción
+                  Description
                 </label>
                 <textarea
                   value={form.description}
@@ -270,7 +248,7 @@ export default function RoomFormPage() {
                   }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   rows={3}
-                  placeholder="Ej: Habitación doble con vista al mar..."
+                  placeholder="e.g. Double room with ocean view..."
                   disabled={loading}
                 />
               </div>
@@ -282,10 +260,10 @@ export default function RoomFormPage() {
                   onClick={handleCancel}
                   disabled={loading}
                 >
-                  Cancelar
+                  Cancel
                 </Button>
                 <Button type="submit" disabled={loading}>
-                  {isEdit ? "Guardar cambios" : "Crear habitación"}
+                  {isEdit ? "Save changes" : "Create room"}
                 </Button>
               </div>
             </form>

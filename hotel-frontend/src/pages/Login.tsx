@@ -1,30 +1,43 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AxiosError } from "axios";
 import api from "../api/api";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { toast } from "sonner";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  // Úsalo solo para validación local (no para errores del backend)
   const [error, setError] = useState("");
+
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    // Validación local mínima (opcional)
     setError("");
+    if (!email.trim() || !password.trim()) {
+      setError("Email and password are required.");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const res = await api.post("/auth/login", { email, password });
+
       localStorage.setItem("token", res.data.token);
-      navigate("/"); // redirige al dashboard
+
+      toast.success("Signed in successfully");
+      navigate("/");
     } catch (err) {
-      const axiosError = err as AxiosError<{ message?: string }>;
-      const message = axiosError.response?.data?.message || "Error al iniciar sesión";
-      setError(message);
+      // El interceptor global ya hace toast.error(...)
+      // Si querés mostrar algo inline SOLO para este caso, descomenta:
+      // setError("Could not sign in. Please check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -38,22 +51,18 @@ export default function Login() {
             HM
           </div>
           <div>
-            <p className="text-sm text-slate-200 font-semibold">
-              HotelManager
-            </p>
-            <p className="text-xs text-slate-400">
-              Panel de administración
-            </p>
+            <p className="text-sm text-slate-200 font-semibold">HotelManager</p>
+            <p className="text-xs text-slate-400">Admin panel</p>
           </div>
         </div>
 
         <Card>
           <CardBody>
             <h1 className="text-xl font-semibold text-slate-900 mb-1">
-              Iniciar sesión
+              Sign in
             </h1>
             <p className="text-sm text-slate-500 mb-4">
-              Ingresa tus credenciales para acceder al panel.
+              Enter your credentials to access the dashboard.
             </p>
 
             {error && (
@@ -69,17 +78,18 @@ export default function Login() {
                 </label>
                 <input
                   type="email"
-                  placeholder="ejemplo@hotel.com"
+                  placeholder="example@hotel.com"
                   className="mt-1 w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  disabled={loading}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700">
-                  Contraseña
+                  Password
                 </label>
                 <input
                   type="password"
@@ -88,22 +98,24 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  disabled={loading}
                 />
               </div>
 
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Ingresando..." : "Ingresar"}
+                {loading ? "Signing in..." : "Sign in"}
               </Button>
             </form>
 
             <p className="mt-4 text-center text-xs text-slate-500">
-              ¿No tienes cuenta?{" "}
+              Don&apos;t have an account?{" "}
               <button
                 type="button"
                 className="text-blue-600 hover:underline"
                 onClick={() => navigate("/signup")}
+                disabled={loading}
               >
-                Registrarse
+                Sign up
               </button>
             </p>
           </CardBody>

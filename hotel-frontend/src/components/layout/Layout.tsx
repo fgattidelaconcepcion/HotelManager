@@ -2,10 +2,10 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 const navItems = [
   { to: "/", label: "Dashboard", exact: true },
-  { to: "/rooms", label: "Habitaciones" },
-  { to: "/guests", label: "Huéspedes" },
-  { to: "/reservations", label: "Reservas" },
-  { to: "/payments", label: "Pagos" },
+  { to: "/rooms", label: "Rooms" },
+  { to: "/guests", label: "Guests" },
+  { to: "/reservations", label: "Reservations" },
+  { to: "/payments", label: "Payments" },
 ];
 
 export default function Layout() {
@@ -27,7 +27,7 @@ export default function Layout() {
             </div>
             <div>
               <p className="text-sm font-semibold">Hotel Manager</p>
-              <p className="text-xs text-slate-400">Panel de administración</p>
+              <p className="text-xs text-slate-400">Admin panel</p>
             </div>
           </div>
         </div>
@@ -55,27 +55,27 @@ export default function Layout() {
         {/* Footer sidebar: info + logout */}
         <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-2 text-xs text-slate-400">
           <div>
-            <p>Sesión iniciada</p>
-            <p className="font-medium text-slate-200">Usuario</p>
+            <p>Signed in</p>
+            <p className="font-medium text-slate-200">User</p>
           </div>
           <button
             onClick={handleLogout}
             className="text-xs px-3 py-1 rounded-md border border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white transition"
           >
-            Cerrar sesión
+            Log out
           </button>
         </div>
       </aside>
 
-      {/* Contenido */}
+      {/* Content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
         <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6">
           <div className="text-sm text-slate-500">
             HotelManager /{" "}
-            <span className="font-medium text-slate-700">Panel</span>
+            <span className="font-medium text-slate-700">Dashboard</span>
           </div>
-          {/* acá más adelante podés poner menú de usuario */}
+          {/* user menu later */}
         </header>
 
         <main className="flex-1 p-6">

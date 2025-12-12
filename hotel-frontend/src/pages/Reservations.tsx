@@ -69,7 +69,7 @@ export default function Reservations() {
       console.error("Error loading bookings", err);
       setError(
         err?.response?.data?.error ||
-          "Hubo un error al cargar las reservas. Intenta nuevamente."
+          "There was an error loading reservations. Please try again."
       );
     } finally {
       setLoading(false);
@@ -84,7 +84,7 @@ export default function Reservations() {
       setPayments(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Error loading payments for reservations", err);
-      // no lo considero crítico, solo no mostramos resumen de pagos
+      // not critical, we just won't show payment summary accurately
     } finally {
       setLoadingPayments(false);
     }
@@ -105,7 +105,7 @@ export default function Reservations() {
   };
 
   const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("es-UY", {
+    new Intl.NumberFormat("en-UY", {
       style: "currency",
       currency: "UYU",
       minimumFractionDigits: 0,
@@ -113,11 +113,11 @@ export default function Reservations() {
 
   const getBookingStatusLabel = (status: string) => {
     const lower = status.toLowerCase();
-    if (lower === "pending") return "Pendiente";
-    if (lower === "confirmed") return "Confirmada";
-    if (lower === "cancelled" || lower === "canceled") return "Cancelada";
-    if (lower === "checked_in") return "Check-in realizado";
-    if (lower === "checked_out") return "Check-out realizado";
+    if (lower === "pending") return "Pending";
+    if (lower === "confirmed") return "Confirmed";
+    if (lower === "cancelled" || lower === "canceled") return "Cancelled";
+    if (lower === "checked_in") return "Checked in";
+    if (lower === "checked_out") return "Checked out";
     return status;
   };
 
@@ -131,18 +131,15 @@ export default function Reservations() {
     return "secondary";
   };
 
-  // Totales generales (sobre todas las reservas)
+  // Overall totals
   const totalBookings = bookings.length;
-  const totalRevenue = bookings.reduce(
-    (sum, b) => sum + (b.totalPrice ?? 0),
-    0
-  );
+  const totalRevenue = bookings.reduce((sum, b) => sum + (b.totalPrice ?? 0), 0);
 
   const totalPaidAllBookings = payments
     .filter((p) => p.status === "completed")
     .reduce((sum, p) => sum + p.amount, 0);
 
-  // Filtros: por huésped y estado de pago
+  // Filters: by guest and payment status
   const filteredBookings = bookings.filter((booking) => {
     const guestName = booking.guest?.name?.toLowerCase() ?? "";
     const matchesGuest =
@@ -152,10 +149,7 @@ export default function Reservations() {
     const paymentsForBooking = payments.filter(
       (p) => p.bookingId === booking.id && p.status === "completed"
     );
-    const totalPaid = paymentsForBooking.reduce(
-      (sum, p) => sum + p.amount,
-      0
-    );
+    const totalPaid = paymentsForBooking.reduce((sum, p) => sum + p.amount, 0);
     const remaining =
       booking.totalPrice != null ? booking.totalPrice - totalPaid : 0;
 
@@ -174,8 +168,8 @@ export default function Reservations() {
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
-        title="Reservas"
-        description="Consulta y gestiona todas las reservas del hotel."
+        title="Reservations"
+        description="View and manage all hotel reservations."
         actions={
           <div className="flex gap-2">
             <Button
@@ -183,29 +177,26 @@ export default function Reservations() {
               type="button"
               onClick={() => navigate("/payments")}
             >
-              Ir a pagos
+              Go to payments
             </Button>
-            <Button
-              type="button"
-              onClick={() => navigate("/reservations/new")}
-            >
-              Nueva reserva
+            <Button type="button" onClick={() => navigate("/reservations/new")}>
+              New reservation
             </Button>
           </div>
         }
       />
 
-      {/* Resumen general */}
+      {/* Overall summary */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <p className="text-xs text-gray-500">Total de reservas</p>
+              <p className="text-xs text-gray-500">Total reservations</p>
               <p className="text-lg font-semibold mt-1">{totalBookings}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500">
-                Importe total de reservas
+                Total reservation amount
               </p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalRevenue)}
@@ -213,19 +204,17 @@ export default function Reservations() {
             </div>
             <div>
               <p className="text-xs text-gray-500">
-                Total pagado (pagos completados)
+                Total paid (completed payments)
               </p>
               <p className="text-lg font-semibold mt-1">
-                {loadingPayments
-                  ? "Cargando..."
-                  : formatCurrency(totalPaidAllBookings)}
+                {loadingPayments ? "Loading..." : formatCurrency(totalPaidAllBookings)}
               </p>
             </div>
           </div>
         </CardBody>
       </Card>
 
-      {/* Mensajes de estado */}
+      {/* Status messages */}
       {error && (
         <Card>
           <CardBody>
@@ -236,26 +225,26 @@ export default function Reservations() {
         </Card>
       )}
 
-      {/* Filtros */}
+      {/* Filters */}
       <Card>
         <CardBody>
           <form className="flex flex-wrap gap-4 items-end">
             <div className="flex flex-col">
               <label className="text-sm font-medium text-gray-700">
-                Buscar por huésped
+                Search by guest
               </label>
               <input
                 type="text"
                 value={filterGuest}
                 onChange={(e) => setFilterGuest(e.target.value)}
                 className="mt-1 border rounded px-3 py-2 text-sm w-60"
-                placeholder="Nombre del huésped"
+                placeholder="Guest name"
               />
             </div>
 
             <div className="flex flex-col">
               <label className="text-sm font-medium text-gray-700">
-                Estado de pago
+                Payment status
               </label>
               <select
                 value={filterPaymentStatus}
@@ -266,10 +255,10 @@ export default function Reservations() {
                 }
                 className="mt-1 border rounded px-3 py-2 text-sm w-52"
               >
-                <option value="">Todos</option>
-                <option value="none">Sin pagos</option>
-                <option value="partial">Parcialmente pagada</option>
-                <option value="full">Totalmente pagada</option>
+                <option value="">All</option>
+                <option value="none">No payments</option>
+                <option value="partial">Partially paid</option>
+                <option value="full">Fully paid</option>
               </select>
             </div>
 
@@ -282,14 +271,14 @@ export default function Reservations() {
                   setFilterPaymentStatus("");
                 }}
               >
-                Limpiar filtros
+                Clear filters
               </Button>
             </div>
           </form>
         </CardBody>
       </Card>
 
-      {/* Tabla de reservas */}
+      {/* Reservations table */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
@@ -300,34 +289,35 @@ export default function Reservations() {
                     ID
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Huésped
+                    Guest
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Habitación
+                    Room
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Fechas
+                    Dates
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Total reserva
+                    Total
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Pagado
+                    Paid
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Pendiente
+                    Due
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Estado reserva
+                    Reservation status
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Estado de pago
+                    Payment status
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Acciones
+                    Actions
                   </th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredBookings.length === 0 && !loading && (
                   <tr>
@@ -336,16 +326,15 @@ export default function Reservations() {
                       className="px-4 py-6 text-center text-gray-500"
                     >
                       {bookings.length === 0
-                        ? "No hay reservas registradas."
-                        : "No hay reservas que coincidan con los filtros."}
+                        ? "No reservations found."
+                        : "No reservations match your filters."}
                     </td>
                   </tr>
                 )}
 
                 {filteredBookings.map((booking) => {
                   const paymentsForBooking = payments.filter(
-                    (p) =>
-                      p.bookingId === booking.id && p.status === "completed"
+                    (p) => p.bookingId === booking.id && p.status === "completed"
                   );
                   const totalPaid = paymentsForBooking.reduce(
                     (sum, p) => sum + p.amount,
@@ -356,18 +345,18 @@ export default function Reservations() {
                       ? booking.totalPrice - totalPaid
                       : 0;
 
-                  let paymentStatusLabel = "Sin pagos";
+                  let paymentStatusLabel = "No payments";
                   let paymentStatusVariant: "success" | "warning" | "danger" =
                     "danger";
 
                   if (totalPaid <= 0) {
-                    paymentStatusLabel = "Sin pagos";
+                    paymentStatusLabel = "No payments";
                     paymentStatusVariant = "danger";
                   } else if (remaining > 0) {
-                    paymentStatusLabel = "Parcialmente pagada";
+                    paymentStatusLabel = "Partially paid";
                     paymentStatusVariant = "warning";
                   } else {
-                    paymentStatusLabel = "Totalmente pagada";
+                    paymentStatusLabel = "Fully paid";
                     paymentStatusVariant = "success";
                   }
 
@@ -379,12 +368,11 @@ export default function Reservations() {
                       </td>
                       <td className="px-4 py-2 align-top">
                         {booking.room
-                          ? `Hab ${booking.room.number} (piso ${booking.room.floor})`
+                          ? `Room ${booking.room.number} (floor ${booking.room.floor})`
                           : "-"}
                       </td>
                       <td className="px-4 py-2 align-top">
-                        {formatDate(booking.checkIn)} →{" "}
-                        {formatDate(booking.checkOut)}
+                        {formatDate(booking.checkIn)} → {formatDate(booking.checkOut)}
                       </td>
                       <td className="px-4 py-2 align-top text-right">
                         {formatCurrency(booking.totalPrice ?? 0)}
@@ -410,11 +398,9 @@ export default function Reservations() {
                           type="button"
                           variant="ghost"
                           className="text-xs px-3 py-1"
-                          onClick={() =>
-                            navigate(`/reservations/${booking.id}`)
-                          }
+                          onClick={() => navigate(`/reservations/${booking.id}`)}
                         >
-                          Ver detalle
+                          View details
                         </Button>
                         <Button
                           type="button"
@@ -422,7 +408,7 @@ export default function Reservations() {
                           className="text-xs px-3 py-1"
                           onClick={() => navigate("/payments")}
                         >
-                          Gestionar pagos
+                          Manage payments
                         </Button>
                       </td>
                     </tr>
@@ -435,7 +421,7 @@ export default function Reservations() {
                       colSpan={10}
                       className="px-4 py-4 text-center text-gray-500"
                     >
-                      Cargando...
+                      Loading...
                     </td>
                   </tr>
                 )}

@@ -5,12 +5,15 @@ import {
   getAvailableRooms,
   deleteRoom,
   updateRoom,
+  getRoomById,
 } from "../controllers/rooms.controller";
 
 const router = Router();
 
 // Obtener habitaciones disponibles
 router.get("/available", getAvailableRooms);
+
+router.get("/:id", getRoomById);
 
 // Obtener todas
 router.get("/", getAllRooms);

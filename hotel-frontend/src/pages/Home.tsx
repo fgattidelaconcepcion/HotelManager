@@ -63,7 +63,7 @@ export default function Home() {
       console.error("Error loading dashboard data", err);
       setError(
         err?.response?.data?.error ||
-          "Hubo un error al cargar el dashboard. Intenta nuevamente."
+          "There was an error loading the dashboard. Please try again."
       );
     } finally {
       setLoading(false);
@@ -95,16 +95,13 @@ export default function Home() {
   );
 
   const completedPayments = payments.filter((p) => p.status === "completed");
-  const totalRevenue = completedPayments.reduce(
-    (sum, p) => sum + p.amount,
-    0
-  );
+  const totalRevenue = completedPayments.reduce((sum, p) => sum + p.amount, 0);
 
   const occupancyRate =
     totalRooms > 0 ? Math.round((activeBookings.length / totalRooms) * 100) : 0;
 
   const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("es-UY", {
+    new Intl.NumberFormat("en-UY", {
       style: "currency",
       currency: "UYU",
       minimumFractionDigits: 0,
@@ -118,8 +115,7 @@ export default function Home() {
 
   const latestPayments = [...completedPayments]
     .sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )
     .slice(0, 5);
 
@@ -128,98 +124,96 @@ export default function Home() {
       {/* Header */}
       <PageHeader
         title="Dashboard"
-        description="Resumen general del hotel."
+        description="Overall hotel summary."
         actions={
           <Button variant="secondary" onClick={loadData} disabled={loading}>
-            {loading ? "Actualizando..." : "Refrescar datos"}
+            {loading ? "Updating..." : "Refresh data"}
           </Button>
         }
       />
 
-      {/* Bienvenida */}
+      {/* Welcome */}
       <Card>
         <CardBody>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">
-                Bienvenido al panel del Hotel
+                Welcome to the Hotel Dashboard
               </h2>
               <p className="text-sm text-slate-500 mt-1">
-                Acá puedes ver un resumen rápido de ocupación, reservas y
-                ingresos.
+                Here you can see a quick summary of occupancy, reservations and
+                revenue.
               </p>
             </div>
             <div className="flex gap-2">
-              <Badge variant="success">Producción demo</Badge>
+              <Badge variant="success">Demo production</Badge>
             </div>
           </div>
         </CardBody>
       </Card>
 
-      {/* KPIs principales */}
+      {/* Main KPIs */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardBody>
-            <p className="text-xs text-slate-500">Habitaciones totales</p>
+            <p className="text-xs text-slate-500">Total rooms</p>
             <p className="text-2xl font-semibold mt-1">{totalRooms}</p>
             <p className="text-xs text-slate-400 mt-1">
-              Habitaciones registradas en el sistema.
+              Rooms registered in the system.
             </p>
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
-            <p className="text-xs text-slate-500">Ocupación actual</p>
-            <p className="text-2xl font-semibold mt-1">
-              {occupancyRate}%
-            </p>
+            <p className="text-xs text-slate-500">Current occupancy</p>
+            <p className="text-2xl font-semibold mt-1">{occupancyRate}%</p>
             <p className="text-xs text-slate-400 mt-1">
-              {activeBookings.length} reservas activas.
+              {activeBookings.length} active reservations.
             </p>
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
-            <p className="text-xs text-slate-500">Ingresos por pagos</p>
+            <p className="text-xs text-slate-500">Payment revenue</p>
             <p className="text-2xl font-semibold mt-1">
               {formatCurrency(totalRevenue)}
             </p>
             <p className="text-xs text-slate-400 mt-1">
-              Total de pagos completados.
+              Total completed payments.
             </p>
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
-            <p className="text-xs text-slate-500">Hoy</p>
+            <p className="text-xs text-slate-500">Today</p>
             <p className="text-base font-semibold mt-1">
               Check-in: {todaysCheckIns.length} · Check-out:{" "}
               {todaysCheckOuts.length}
             </p>
             <p className="text-xs text-slate-400 mt-1">
-              Movimientos programados para hoy.
+              Scheduled activity for today.
             </p>
           </CardBody>
         </Card>
       </div>
 
-      {/* Listas rápidas: últimas reservas y pagos */}
+      {/* Quick lists: latest bookings and payments */}
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Últimas reservas */}
+        {/* Latest bookings */}
         <Card>
           <CardBody>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-slate-800">
-                Últimas reservas
+                Latest reservations
               </h3>
             </div>
 
             {latestBookings.length === 0 && (
               <p className="text-sm text-slate-500">
-                Aún no hay reservas registradas.
+                There are no reservations yet.
               </p>
             )}
 
@@ -232,7 +226,7 @@ export default function Home() {
                   >
                     <div>
                       <p className="text-sm font-medium text-slate-800">
-                        Reserva #{b.id}
+                        Reservation #{b.id}
                       </p>
                       <p className="text-xs text-slate-500">
                         {new Date(b.checkIn).toLocaleDateString()} →{" "}
@@ -257,18 +251,18 @@ export default function Home() {
           </CardBody>
         </Card>
 
-        {/* Últimos pagos */}
+        {/* Latest payments */}
         <Card>
           <CardBody>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-slate-800">
-                Últimos pagos
+                Latest payments
               </h3>
             </div>
 
             {latestPayments.length === 0 && (
               <p className="text-sm text-slate-500">
-                Aún no hay pagos completados.
+                There are no completed payments yet.
               </p>
             )}
 
@@ -281,7 +275,7 @@ export default function Home() {
                   >
                     <div>
                       <p className="text-sm font-medium text-slate-800">
-                        Pago #{p.id}
+                        Payment #{p.id}
                       </p>
                       <p className="text-xs text-slate-500">
                         {new Date(p.createdAt).toLocaleString()}

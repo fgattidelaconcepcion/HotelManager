@@ -4,6 +4,7 @@ import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { toast } from "sonner";
 
 interface GuestFormState {
   name: string;
@@ -30,6 +31,8 @@ export default function GuestFormPage() {
   const [form, setForm] = useState<GuestFormState>(emptyForm);
   const [loading, setLoading] = useState(false);
   const [loadingGuest, setLoadingGuest] = useState(false);
+
+  // Usalo SOLO para validaciones del formulario (no para errores del backend)
   const [error, setError] = useState<string | null>(null);
 
   const handleChange = (field: keyof GuestFormState, value: string) => {
@@ -39,75 +42,71 @@ export default function GuestFormPage() {
     }));
   };
 
-  const loadGuest = async () => {
-    if (!id) return;
-    const guestId = Number(id);
-    if (Number.isNaN(guestId)) {
-      setError("ID de huésped inválido.");
-      return;
-    }
+const loadGuest = async () => {
+  if (!id) return;
 
-    try {
-      setLoadingGuest(true);
-      setError(null);
-      const res = await api.get(`/guests/${guestId}`);
-      const data = res.data?.data ?? res.data;
+  const guestId = Number(id);
+  if (Number.isNaN(guestId)) {
+    setError("Invalid guest ID.");
+    return;
+  }
 
-      setForm({
-        name: data.name ?? "",
-        email: data.email ?? "",
-        phone: data.phone ?? "",
-        documentNumber: data.documentNumber ?? "",
-        address: data.address ?? "",
-      });
-    } catch (err: any) {
-      console.error("Error loading guest", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo cargar el huésped. Intenta nuevamente."
-      );
-    } finally {
-      setLoadingGuest(false);
-    }
-  };
+  try {
+    setLoadingGuest(true);
+    setError(null);
+
+    const res = await api.get(`/guests/${guestId}`);
+
+    const guest = res.data?.guest ?? res.data?.data ?? res.data; // <-- clave
+
+    setForm({
+      name: guest?.name ?? "",
+      email: guest?.email ?? "",
+      phone: guest?.phone ?? "",
+      documentNumber: guest?.documentNumber ?? "",
+      address: guest?.address ?? "",
+    });
+  } finally {
+    setLoadingGuest(false);
+  }
+};
+
+
 
   useEffect(() => {
     if (isEdit) {
       loadGuest();
     } else {
       setForm(emptyForm);
+      setError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const validateForm = () => {
     if (!form.name.trim()) {
-      setError("El nombre es obligatorio.");
+      setError("Name is required.");
       return false;
     }
 
     if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim())) {
-      setError("El email no tiene un formato válido.");
+      setError("Email format is not valid.");
       return false;
     }
 
+    setError(null);
     return true;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
 
     if (!validateForm()) return;
 
-    const payload: any = {
-      name: form.name.trim(),
-    };
-
+    const payload: any = { name: form.name.trim() };
     if (form.email.trim()) payload.email = form.email.trim();
     if (form.phone.trim()) payload.phone = form.phone.trim();
-    if (form.documentNumber.trim())
-      payload.documentNumber = form.documentNumber.trim();
+    if (form.documentNumber.trim()) payload.documentNumber = form.documentNumber.trim();
     if (form.address.trim()) payload.address = form.address.trim();
 
     try {
@@ -116,17 +115,16 @@ export default function GuestFormPage() {
       if (isEdit && id) {
         const guestId = Number(id);
         await api.put(`/guests/${guestId}`, payload);
+        toast.success("Guest updated successfully");
       } else {
         await api.post("/guests", payload);
+        toast.success("Guest created successfully");
       }
 
       navigate("/guests");
-    } catch (err: any) {
-      console.error("Error saving guest", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo guardar el huésped. Revisa los datos e intenta nuevamente."
-      );
+    } catch (err) {
+      // interceptor global -> toast.error(...)
+      // acá no hace falta setError, salvo que quieras inline
     } finally {
       setLoading(false);
     }
@@ -139,15 +137,15 @@ export default function GuestFormPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={isEdit ? "Editar huésped" : "Nuevo huésped"}
+        title={isEdit ? "Edit guest" : "New guest"}
         description={
           isEdit
-            ? "Modifica los datos del huésped seleccionado."
-            : "Registra un nuevo huésped en el sistema."
+            ? "Update the selected guest information."
+            : "Register a new guest in the system."
         }
         actions={
           <Button type="button" variant="ghost" onClick={handleCancel}>
-            Volver a huéspedes
+            Back to guests
           </Button>
         }
       />
@@ -165,23 +163,23 @@ export default function GuestFormPage() {
       <Card>
         <CardBody>
           {loadingGuest && isEdit ? (
-            <p className="text-sm text-gray-500">Cargando datos...</p>
+            <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
               <p className="text-xs text-slate-500">
-                Los campos marcados con * son obligatorios.
+                Fields marked with * are required.
               </p>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Nombre *
+                  Name *
                 </label>
                 <input
                   type="text"
                   value={form.name}
                   onChange={(e) => handleChange("name", e.target.value)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="Ej: Juan Pérez"
+                  placeholder="e.g., John Doe"
                   disabled={loading}
                 />
               </div>
@@ -195,51 +193,49 @@ export default function GuestFormPage() {
                   value={form.email}
                   onChange={(e) => handleChange("email", e.target.value)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="Ej: juan@example.com"
+                  placeholder="e.g., john@example.com"
                   disabled={loading}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Teléfono
+                  Phone
                 </label>
                 <input
                   type="text"
                   value={form.phone}
                   onChange={(e) => handleChange("phone", e.target.value)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="Ej: +598 99 123 456"
+                  placeholder="e.g., +598 99 123 456"
                   disabled={loading}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Documento
+                  Document
                 </label>
                 <input
                   type="text"
                   value={form.documentNumber}
-                  onChange={(e) =>
-                    handleChange("documentNumber", e.target.value)
-                  }
+                  onChange={(e) => handleChange("documentNumber", e.target.value)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="Ej: CI 4.123.456-7"
+                  placeholder="e.g., ID 4.123.456-7"
                   disabled={loading}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Dirección
+                  Address
                 </label>
                 <input
                   type="text"
                   value={form.address}
                   onChange={(e) => handleChange("address", e.target.value)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="Ej: Av. Siempre Viva 1234"
+                  placeholder="e.g., Evergreen Ave 1234"
                   disabled={loading}
                 />
               </div>
@@ -251,10 +247,10 @@ export default function GuestFormPage() {
                   onClick={handleCancel}
                   disabled={loading}
                 >
-                  Cancelar
+                  Cancel
                 </Button>
                 <Button type="submit" disabled={loading}>
-                  {isEdit ? "Guardar cambios" : "Crear huésped"}
+                  {isEdit ? "Save changes" : "Create guest"}
                 </Button>
               </div>
             </form>

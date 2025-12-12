@@ -5,6 +5,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { toast } from "sonner";
 
 type PaymentMethod = "cash" | "card" | "transfer";
 type PaymentStatus = "pending" | "completed" | "failed";
@@ -45,7 +46,7 @@ export interface Payment {
   booking?: PaymentBooking | null;
 }
 
-/* === Tipos de reservas (para el selector) === */
+/* === Booking types (for selector) === */
 
 interface BookingGuest {
   id: number;
@@ -110,35 +111,39 @@ export default function Payments() {
   const [filterBookingId, setFilterBookingId] = useState("");
   const [filterStatus, setFilterStatus] = useState<"" | PaymentStatus>("");
 
-  // Para que sólo se auto-abra una vez desde /payments?bookingId=...
+  // to auto-open only once from /payments?bookingId=...
   const [autoOpenedFromBooking, setAutoOpenedFromBooking] = useState(false);
 
-  const loadPayments = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+const loadPayments = async () => {
+  try {
+    setLoading(true);
+    setError(null);
 
-      const params: Record<string, string> = {};
-      if (filterBookingId.trim()) {
-        params.bookingId = filterBookingId.trim();
-      }
-      if (filterStatus) {
-        params.status = filterStatus;
-      }
+    const params: Record<string, string> = {};  // Aquí definimos el objeto params
 
-      const response = await api.get("/payments", { params });
-      const data = response.data?.data ?? response.data;
-      setPayments(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      console.error("Error loading payments", err);
-      setError(
-        err?.response?.data?.error ||
-          "Hubo un error al cargar los pagos. Intenta nuevamente."
-      );
-    } finally {
-      setLoading(false);
+    if (filterBookingId.trim()) {
+      params.bookingId = filterBookingId.trim();
     }
-  };
+
+    if (filterStatus) {
+      params.status = filterStatus;
+    }
+
+    const response = await api.get("/payments", { params });
+    const data = response.data?.data ?? response.data;
+
+    setPayments(Array.isArray(data) ? data : []);
+  } catch (err) {
+    console.error("Error loading payments", err);
+    setError(
+      err?.response?.data?.error ||
+        "There was an error loading payments. Please try again."
+    );
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const loadBookings = async () => {
     try {
@@ -148,7 +153,7 @@ export default function Payments() {
       setBookings(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Error loading bookings", err);
-      // No lo tomo como error crítico, solo deja el selector vacío
+      // not critical
     } finally {
       setLoadingBookings(false);
     }
@@ -160,7 +165,7 @@ export default function Payments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-abrir modal si venimos desde /payments?bookingId=...
+  // Auto-open modal if coming from /payments?bookingId=...
   useEffect(() => {
     const bookingIdParam = searchParams.get("bookingId");
     if (!bookingIdParam) return;
@@ -169,7 +174,7 @@ export default function Payments() {
     const bookingIdNum = Number(bookingIdParam);
     if (!bookingIdNum || Number.isNaN(bookingIdNum)) return;
 
-    // Esperar a tener las reservas cargadas
+    // wait for bookings
     if (loadingBookings) return;
 
     const exists = bookings.some((b) => b.id === bookingIdNum);
@@ -220,91 +225,88 @@ export default function Payments() {
 
   const validateForm = () => {
     if (!form.bookingId.trim()) {
-      setError("La reserva es obligatoria.");
+      setError("Reservation is required.");
       return false;
     }
 
     const bookingIdNum = Number(form.bookingId);
     if (isNaN(bookingIdNum)) {
-      setError("El ID de reserva debe ser un número válido.");
+      setError("Reservation ID must be a valid number.");
       return false;
     }
 
     const bookingExists = bookings.some((b) => b.id === bookingIdNum);
     if (!bookingExists) {
-      setError("La reserva seleccionada no existe.");
+      setError("The selected reservation does not exist.");
       return false;
     }
 
     if (!form.amount.trim()) {
-      setError("El monto es obligatorio.");
+      setError("Amount is required.");
       return false;
     }
     const amountNumber = Number(form.amount);
     if (isNaN(amountNumber) || amountNumber <= 0) {
-      setError("El monto debe ser un número mayor que 0.");
+      setError("Amount must be a number greater than 0.");
       return false;
     }
     return true;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+ const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setError(null);
 
-    if (!validateForm()) return;
+  if (!validateForm()) {
+    toast.warning(error ?? "Please review the form.");
+    return;
+  }
 
-    const payload = {
-      bookingId: Number(form.bookingId),
-      amount: Number(form.amount),
-      method: form.method,
-      status: form.status,
-    };
-
-    try {
-      setLoading(true);
-
-      if (isEditing && form.id != null) {
-        await api.put(`/payments/${form.id}`, payload);
-      } else {
-        await api.post("/payments", payload);
-      }
-
-      await loadPayments();
-      handleCloseModal();
-    } catch (err: any) {
-      console.error("Error saving payment", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo guardar el pago. Revisa los datos e intenta nuevamente."
-      );
-    } finally {
-      setLoading(false);
-    }
+  const payload = {
+    bookingId: Number(form.bookingId),
+    amount: Number(form.amount),
+    method: form.method,
+    status: form.status,
   };
+
+  try {
+    setLoading(true);
+
+    if (isEditing && form.id != null) {
+      await api.put(`/payments/${form.id}`, payload);
+      toast.success("Payment updated");
+    } else {
+      await api.post("/payments", payload);
+      toast.success("Payment created");
+    }
+
+    await loadPayments();
+    handleCloseModal();
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const handleDelete = async (payment: Payment) => {
-    const ok = window.confirm(
-      `¿Seguro que quieres eliminar el pago #${payment.id} (reserva #${payment.bookingId})?`
-    );
-    if (!ok) return;
+  const ok = window.confirm(
+    `Are you sure you want to delete payment #${payment.id} (reservation #${payment.bookingId})?`
+  );
+  if (!ok) return;
 
-    try {
-      setLoading(true);
-      setError(null);
+  try {
+    setLoading(true);
+    setError(null);
 
-      await api.delete(`/payments/${payment.id}`);
-      await loadPayments();
-    } catch (err: any) {
-      console.error("Error deleting payment", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo eliminar el pago. Intenta nuevamente."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+    await api.delete(`/payments/${payment.id}`);
+    toast.success("Payment deleted");
+
+    await loadPayments();
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const handleApplyFilters = (e: React.FormEvent) => {
     e.preventDefault();
@@ -334,7 +336,7 @@ export default function Payments() {
   };
 
   const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("es-UY", {
+    new Intl.NumberFormat("en-UY", {
       style: "currency",
       currency: "UYU",
       minimumFractionDigits: 0,
@@ -343,11 +345,11 @@ export default function Payments() {
   const getStatusLabel = (status: PaymentStatus) => {
     switch (status) {
       case "pending":
-        return "Pendiente";
+        return "Pending";
       case "completed":
-        return "Completado";
+        return "Completed";
       case "failed":
-        return "Fallido";
+        return "Failed";
       default:
         return status;
     }
@@ -356,17 +358,17 @@ export default function Payments() {
   const getMethodLabel = (method: PaymentMethod) => {
     switch (method) {
       case "cash":
-        return "Efectivo";
+        return "Cash";
       case "card":
-        return "Tarjeta";
+        return "Card";
       case "transfer":
-        return "Transferencia";
+        return "Bank transfer";
       default:
         return method;
     }
   };
 
-  // === Totales generales de pagos ===
+  // === Totals ===
   const totalAmount = payments.reduce((sum, p) => sum + p.amount, 0);
   const totalByStatus: Record<PaymentStatus, number> = {
     pending: payments
@@ -380,7 +382,7 @@ export default function Payments() {
       .reduce((s, p) => s + p.amount, 0),
   };
 
-  // === Info de la reserva seleccionada en el modal ===
+  // === Selected booking info in modal ===
   const selectedBookingId = form.bookingId ? Number(form.bookingId) : null;
   const selectedBooking = selectedBookingId
     ? bookings.find((b) => b.id === selectedBookingId) || null
@@ -400,8 +402,7 @@ export default function Payments() {
       ? selectedBooking.totalPrice - totalPaidForSelected
       : 0;
 
-  const isBookingFullyPaid =
-    !!selectedBooking && remainingForSelected <= 0;
+  const isBookingFullyPaid = !!selectedBooking && remainingForSelected <= 0;
 
   const handleFillRemainingAmount = () => {
     if (!selectedBooking) return;
@@ -417,8 +418,8 @@ export default function Payments() {
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
-        title="Pagos"
-        description="Gestiona los pagos asociados a las reservas."
+        title="Payments"
+        description="Manage payments linked to reservations."
         actions={
           <div className="flex gap-2">
             <Button
@@ -426,39 +427,39 @@ export default function Payments() {
               type="button"
               onClick={() => navigate("/reservations/new")}
             >
-              Nueva reserva
+              New reservation
             </Button>
             <Button type="button" onClick={handleOpenCreate}>
-              Nuevo pago
+              New payment
             </Button>
           </div>
         }
       />
 
-      {/* Resumen de totales */}
+      {/* Totals summary */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-4">
             <div>
-              <p className="text-xs text-gray-500">Total de pagos</p>
+              <p className="text-xs text-gray-500">Total payments</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalAmount)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Completados</p>
+              <p className="text-xs text-gray-500">Completed</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalByStatus.completed)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Pendientes</p>
+              <p className="text-xs text-gray-500">Pending</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalByStatus.pending)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Fallidos</p>
+              <p className="text-xs text-gray-500">Failed</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalByStatus.failed)}
               </p>
@@ -467,7 +468,7 @@ export default function Payments() {
         </CardBody>
       </Card>
 
-      {/* Filtros */}
+      {/* Filters */}
       <Card>
         <CardBody>
           <form
@@ -476,20 +477,20 @@ export default function Payments() {
           >
             <div className="flex flex-col">
               <label className="text-sm font-medium text-gray-700">
-                ID de reserva
+                Reservation ID
               </label>
               <input
                 type="text"
                 value={filterBookingId}
                 onChange={(e) => setFilterBookingId(e.target.value)}
                 className="mt-1 border rounded px-3 py-2 text-sm w-40"
-                placeholder="Ej: 1"
+                placeholder="e.g. 1"
               />
             </div>
 
             <div className="flex flex-col">
               <label className="text-sm font-medium text-gray-700">
-                Estado
+                Status
               </label>
               <select
                 value={filterStatus}
@@ -498,30 +499,30 @@ export default function Payments() {
                 }
                 className="mt-1 border rounded px-3 py-2 text-sm w-44"
               >
-                <option value="">Todos</option>
-                <option value="pending">Pendiente</option>
-                <option value="completed">Completado</option>
-                <option value="failed">Fallido</option>
+                <option value="">All</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
               </select>
             </div>
 
             <div className="flex gap-2">
               <Button type="submit" variant="secondary">
-                Aplicar filtros
+                Apply filters
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 onClick={handleClearFilters}
               >
-                Limpiar
+                Clear
               </Button>
             </div>
           </form>
         </CardBody>
       </Card>
 
-      {/* Mensajes de estado */}
+      {/* Status messages */}
       {error && (
         <Card>
           <CardBody>
@@ -532,7 +533,7 @@ export default function Payments() {
         </Card>
       )}
 
-      {/* Tabla de pagos */}
+      {/* Payments table */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
@@ -543,28 +544,28 @@ export default function Payments() {
                     ID
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Reserva
+                    Reservation
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Huésped
+                    Guest
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Habitación
+                    Room
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Monto
+                    Amount
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Método
+                    Method
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Estado
+                    Status
                   </th>
                   <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Fecha
+                    Date
                   </th>
                   <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Acciones
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -575,7 +576,7 @@ export default function Payments() {
                       colSpan={9}
                       className="px-4 py-6 text-center text-gray-500"
                     >
-                      No hay pagos registrados.
+                      No payments found.
                     </td>
                   </tr>
                 )}
@@ -583,15 +584,13 @@ export default function Payments() {
                 {payments.map((payment) => (
                   <tr key={payment.id} className="border-t last:border-b">
                     <td className="px-4 py-2 align-top">{payment.id}</td>
-                    <td className="px-4 py-2 align-top">
-                      #{payment.bookingId}
-                    </td>
+                    <td className="px-4 py-2 align-top">#{payment.bookingId}</td>
                     <td className="px-4 py-2 align-top">
                       {payment.booking?.guest?.name || "-"}
                     </td>
                     <td className="px-4 py-2 align-top">
                       {payment.booking?.room
-                        ? `Hab ${payment.booking.room.number} (piso ${payment.booking.room.floor})`
+                        ? `Room ${payment.booking.room.number} (floor ${payment.booking.room.floor})`
                         : "-"}
                     </td>
                     <td className="px-4 py-2 align-top text-right">
@@ -623,7 +622,7 @@ export default function Payments() {
                         className="text-xs px-3 py-1"
                         onClick={() => handleOpenEdit(payment)}
                       >
-                        Editar
+                        Edit
                       </Button>
                       <Button
                         type="button"
@@ -631,7 +630,7 @@ export default function Payments() {
                         className="text-xs px-3 py-1"
                         onClick={() => handleDelete(payment)}
                       >
-                        Eliminar
+                        Delete
                       </Button>
                     </td>
                   </tr>
@@ -643,7 +642,7 @@ export default function Payments() {
                       colSpan={9}
                       className="px-4 py-4 text-center text-gray-500"
                     >
-                      Cargando...
+                      Loading...
                     </td>
                   </tr>
                 )}
@@ -653,50 +652,49 @@ export default function Payments() {
         </CardBody>
       </Card>
 
-      {/* Modal crear/editar pago */}
+      {/* Create/Edit payment modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <Card className="w-full max-w-md">
             <CardBody>
               <h3 className="text-lg font-semibold mb-4">
-                {isEditing ? "Editar pago" : "Nuevo pago"}
+                {isEditing ? "Edit payment" : "New payment"}
               </h3>
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Selector de reserva */}
+                {/* Booking selector */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    Reserva
+                    Reservation
                   </label>
                   <select
                     value={form.bookingId}
-                    onChange={(e) =>
-                      handleChange("bookingId", e.target.value)
-                    }
+                    onChange={(e) => handleChange("bookingId", e.target.value)}
                     className="mt-1 w-full border rounded px-3 py-2 text-sm"
                     disabled={loadingBookings}
                   >
                     <option value="">
                       {loadingBookings
-                        ? "Cargando reservas..."
-                        : "Selecciona una reserva"}
+                        ? "Loading reservations..."
+                        : "Select a reservation"}
                     </option>
                     {bookings.map((b) => (
                       <option key={b.id} value={b.id}>
                         #{b.id} -{" "}
                         {b.room
-                          ? `Hab ${b.room.number} (piso ${b.room.floor})`
-                          : "Sin habitación"}{" "}
-                        - {b.guest?.name ?? "Sin huésped"} -{" "}
-                        {formatDate(b.checkIn)} → {formatDate(b.checkOut)}
+                          ? `Room ${b.room.number} (floor ${b.room.floor})`
+                          : "No room"}{" "}
+                        - {b.guest?.name ?? "No guest"} - {formatDate(b.checkIn)} →{" "}
+                        {formatDate(b.checkOut)}
                       </option>
                     ))}
                   </select>
+
                   <p className="text-xs text-gray-500 mt-1">
-                    Debe existir una reserva con este ID.
+                    A reservation with this ID must exist.
                   </p>
 
-                  {/* Acciones rápidas: nueva reserva, huésped, habitación */}
+                  {/* Quick actions */}
                   <div className="flex flex-wrap gap-2 mt-2">
                     <Button
                       type="button"
@@ -704,7 +702,7 @@ export default function Payments() {
                       className="text-xs px-2 py-1"
                       onClick={() => navigate("/reservations/new")}
                     >
-                      Nueva reserva
+                      New reservation
                     </Button>
                     <Button
                       type="button"
@@ -712,7 +710,7 @@ export default function Payments() {
                       className="text-xs px-2 py-1"
                       onClick={() => navigate("/guests/new")}
                     >
-                      Nuevo huésped
+                      New guest
                     </Button>
                     <Button
                       type="button"
@@ -720,29 +718,29 @@ export default function Payments() {
                       className="text-xs px-2 py-1"
                       onClick={() => navigate("/rooms/new")}
                     >
-                      Nueva habitación
+                      New room
                     </Button>
                   </div>
 
                   {selectedBooking && (
                     <div className="mt-2 text-xs text-gray-600 space-y-1 border rounded p-2 bg-gray-50">
                       <p>
-                        <span className="font-semibold">Total reserva:</span>{" "}
+                        <span className="font-semibold">Reservation total:</span>{" "}
                         {formatCurrency(selectedBooking.totalPrice)}
                       </p>
                       <p>
-                        <span className="font-semibold">Total pagado:</span>{" "}
+                        <span className="font-semibold">Total paid:</span>{" "}
                         {formatCurrency(totalPaidForSelected)}
                       </p>
                       <p>
-                        <span className="font-semibold">Pendiente:</span>{" "}
+                        <span className="font-semibold">Due:</span>{" "}
                         {formatCurrency(remainingForSelected)}
                       </p>
                       <p>
-                        <span className="font-semibold">Estado:</span>{" "}
+                        <span className="font-semibold">Status:</span>{" "}
                         {isBookingFullyPaid
-                          ? "✅ Completamente pagada"
-                          : "🟡 Con saldo pendiente"}
+                          ? "✅ Fully paid"
+                          : "🟡 Balance due"}
                       </p>
 
                       {!isBookingFullyPaid && remainingForSelected > 0 && (
@@ -753,7 +751,7 @@ export default function Payments() {
                             className="text-xs px-2 py-1"
                             onClick={handleFillRemainingAmount}
                           >
-                            Usar saldo pendiente como monto
+                            Use balance due as amount
                           </Button>
                         </div>
                       )}
@@ -762,67 +760,61 @@ export default function Payments() {
 
                   {!isEditing && isBookingFullyPaid && (
                     <p className="mt-2 text-xs text-red-600">
-                      Esta reserva ya está completamente pagada. No puedes
-                      registrar más pagos completados.
+                      This reservation is already fully paid. You can't register
+                      more completed payments.
                     </p>
                   )}
                 </div>
 
-                {/* Monto */}
+                {/* Amount */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    Monto
+                    Amount
                   </label>
                   <input
                     type="number"
                     value={form.amount}
                     onChange={(e) => handleChange("amount", e.target.value)}
                     className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                    placeholder="Ej: 1200"
+                    placeholder="e.g. 1200"
                     min={0}
                     step={1}
                   />
                 </div>
 
-                {/* Método + Estado */}
+                {/* Method + Status */}
                 <div className="flex gap-4">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700">
-                      Método de pago
+                      Payment method
                     </label>
                     <select
                       value={form.method}
                       onChange={(e) =>
-                        handleChange(
-                          "method",
-                          e.target.value as PaymentMethod
-                        )
+                        handleChange("method", e.target.value as PaymentMethod)
                       }
                       className="mt-1 w-full border rounded px-3 py-2 text-sm"
                     >
-                      <option value="cash">Efectivo</option>
-                      <option value="card">Tarjeta</option>
-                      <option value="transfer">Transferencia</option>
+                      <option value="cash">Cash</option>
+                      <option value="card">Card</option>
+                      <option value="transfer">Bank transfer</option>
                     </select>
                   </div>
 
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700">
-                      Estado
+                      Status
                     </label>
                     <select
                       value={form.status}
                       onChange={(e) =>
-                        handleChange(
-                          "status",
-                          e.target.value as PaymentStatus
-                        )
+                        handleChange("status", e.target.value as PaymentStatus)
                       }
                       className="mt-1 w-full border rounded px-3 py-2 text-sm"
                     >
-                      <option value="pending">Pendiente</option>
-                      <option value="completed">Completado</option>
-                      <option value="failed">Fallido</option>
+                      <option value="pending">Pending</option>
+                      <option value="completed">Completed</option>
+                      <option value="failed">Failed</option>
                     </select>
                   </div>
                 </div>
@@ -833,13 +825,13 @@ export default function Payments() {
                     variant="ghost"
                     onClick={handleCloseModal}
                   >
-                    Cancelar
+                    Cancel
                   </Button>
                   <Button
                     type="submit"
                     disabled={loading || (!isEditing && isBookingFullyPaid)}
                   >
-                    {isEditing ? "Guardar cambios" : "Crear pago"}
+                    {isEditing ? "Save changes" : "Create payment"}
                   </Button>
                 </div>
               </form>

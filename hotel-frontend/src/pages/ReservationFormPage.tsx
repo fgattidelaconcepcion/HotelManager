@@ -4,8 +4,10 @@ import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { toast } from "sonner";
 
-/* === Tipos básicos === */
+
+/* === Basic types === */
 
 interface Guest {
   id: number;
@@ -39,7 +41,7 @@ interface Booking {
   guest?: Guest | null;
 }
 
-/* === Estado del formulario === */
+/* === Form state === */
 
 interface BookingFormState {
   guestId: string;
@@ -91,7 +93,7 @@ export default function ReservationFormPage() {
 
   const formatCurrency = (value?: number | null) => {
     if (value == null) return "-";
-    return new Intl.NumberFormat("es-UY", {
+    return new Intl.NumberFormat("en-UY", {
       style: "currency",
       currency: "UYU",
       minimumFractionDigits: 0,
@@ -108,7 +110,7 @@ export default function ReservationFormPage() {
     return Math.round(diffDays) || 1;
   };
 
-  /* === Datos derivados: reserva seleccionada / habitación / huésped / estimados === */
+  /* === Derived data: selected booking / room / guest / estimates === */
 
   const selectedGuest = useMemo(() => {
     if (!form.guestId) return null;
@@ -134,7 +136,7 @@ export default function ReservationFormPage() {
     return selectedRoom.roomType.basePrice * nights;
   }, [selectedRoom, nights]);
 
-  /* === Carga de datos === */
+  /* === Data loading === */
 
   const loadGuests = async () => {
     try {
@@ -166,7 +168,7 @@ export default function ReservationFormPage() {
     if (!id) return;
     const bookingId = Number(id);
     if (Number.isNaN(bookingId)) {
-      setError("ID de reserva inválido.");
+      setError("Invalid booking ID.");
       return;
     }
 
@@ -186,7 +188,7 @@ export default function ReservationFormPage() {
       console.error("Error loading booking", err);
       setError(
         err?.response?.data?.error ||
-          "No se pudo cargar la reserva. Intenta nuevamente."
+          "Could not load the booking. Please try again."
       );
     } finally {
       setLoadingBooking(false);
@@ -207,27 +209,27 @@ export default function ReservationFormPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  /* === Validación === */
+  /* === Validation === */
 
   const validateForm = () => {
     if (!form.roomId.trim()) {
-      setError("La habitación es obligatoria.");
+      setError("Room is required.");
       return false;
     }
 
     if (!form.guestId.trim()) {
-      setError("El huésped es obligatorio.");
+      setError("Guest is required.");
       return false;
     }
 
     if (!form.checkIn.trim() || !form.checkOut.trim()) {
-      setError("Las fechas de check-in y check-out son obligatorias.");
+      setError("Check-in and check-out dates are required.");
       return false;
     }
 
     const nightsValue = calculateNights(form.checkIn, form.checkOut);
     if (!nightsValue || nightsValue <= 0) {
-      setError("La fecha de check-out debe ser posterior al check-in.");
+      setError("Check-out date must be later than check-in.");
       return false;
     }
 
@@ -237,41 +239,39 @@ export default function ReservationFormPage() {
   /* === Submit === */
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  e.preventDefault();
+  setError(null);
 
-    if (!validateForm()) return;
+  // Solo validación local acá
+  if (!validateForm()) {
+    toast.warning(error ?? "Please review the form.");
+    return;
+  }
 
-    const payload: any = {
-      roomId: Number(form.roomId),
-      guestId: Number(form.guestId),
-      checkIn: form.checkIn,
-      checkOut: form.checkOut,
-      // OJO: el backend calcula totalPrice y status,
-      // así que NO los mandamos aquí para mantenerlo limpio.
-    };
-
-    try {
-      setLoading(true);
-
-      if (isEdit && id) {
-        const bookingId = Number(id);
-        await api.put(`/bookings/${bookingId}`, payload);
-      } else {
-        await api.post("/bookings", payload);
-      }
-
-      navigate("/reservations");
-    } catch (err: any) {
-      console.error("Error saving booking", err);
-      setError(
-        err?.response?.data?.error ||
-          "No se pudo guardar la reserva. Revisa los datos e intenta nuevamente."
-      );
-    } finally {
-      setLoading(false);
-    }
+  const payload = {
+    roomId: Number(form.roomId),
+    guestId: Number(form.guestId),
+    checkIn: form.checkIn,
+    checkOut: form.checkOut,
   };
+
+  try {
+    setLoading(true);
+
+    if (isEdit && id) {
+      const bookingId = Number(id);
+      await api.put(`/bookings/${bookingId}`, payload);
+      toast.success("Booking updated successfully");
+    } else {
+      await api.post("/bookings", payload);
+      toast.success("Booking created successfully");
+    }
+
+    navigate("/reservations");
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleCancel = () => {
     navigate("/reservations");
@@ -282,15 +282,15 @@ export default function ReservationFormPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={isEdit ? "Editar reserva" : "Nueva reserva"}
+        title={isEdit ? "Edit booking" : "New booking"}
         description={
           isEdit
-            ? "Modifica los datos de la reserva seleccionada."
-            : "Crea una nueva reserva asignando huésped y habitación."
+            ? "Edit the details of the selected booking."
+            : "Create a new booking by assigning a guest and room."
         }
         actions={
           <Button type="button" variant="ghost" onClick={handleCancel}>
-            Volver a reservas
+            Back to reservations
           </Button>
         }
       />
@@ -308,20 +308,20 @@ export default function ReservationFormPage() {
       <Card>
         <CardBody>
           {(loadingBooking && isEdit) ? (
-            <p className="text-sm text-gray-500">Cargando datos...</p>
+            <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
               <p className="text-xs text-slate-500">
-                Los campos marcados con * son obligatorios. El sistema
-                calculará automáticamente el importe final según la tarifa base
-                de la habitación y la cantidad de noches.
+                Fields marked with * are required. The system will automatically
+                calculate the final amount based on the room’s base rate and the
+                number of nights.
               </p>
 
-              {/* Huésped + Habitación */}
+              {/* Guest + Room */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    Huésped *
+                    Guest *
                   </label>
                   <select
                     value={form.guestId}
@@ -330,9 +330,7 @@ export default function ReservationFormPage() {
                     disabled={loading || loadingGuests}
                   >
                     <option value="">
-                      {loadingGuests
-                        ? "Cargando huéspedes..."
-                        : "Selecciona un huésped"}
+                      {loadingGuests ? "Loading guests..." : "Select a guest"}
                     </option>
                     {guests.map((g) => (
                       <option key={g.id} value={g.id}>
@@ -345,7 +343,7 @@ export default function ReservationFormPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    Habitación *
+                    Room *
                   </label>
                   <select
                     value={form.roomId}
@@ -354,19 +352,15 @@ export default function ReservationFormPage() {
                     disabled={loading || loadingRooms}
                   >
                     <option value="">
-                      {loadingRooms
-                        ? "Cargando habitaciones..."
-                        : "Selecciona una habitación"}
+                      {loadingRooms ? "Loading rooms..." : "Select a room"}
                     </option>
                     {rooms.map((r) => (
                       <option key={r.id} value={r.id}>
-                        Hab {r.number} (piso {r.floor})
+                        Room {r.number} (floor {r.floor})
                         {r.roomType
                           ? ` - ${r.roomType.name}${
                               r.roomType.basePrice != null
-                                ? ` · base ${formatCurrency(
-                                    r.roomType.basePrice
-                                  )}`
+                                ? ` · base ${formatCurrency(r.roomType.basePrice)}`
                                 : ""
                             }`
                           : ""}
@@ -376,7 +370,7 @@ export default function ReservationFormPage() {
                 </div>
               </div>
 
-              {/* Fechas */}
+              {/* Dates */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
@@ -405,12 +399,12 @@ export default function ReservationFormPage() {
                 </div>
               </div>
 
-              {/* Resumen dinámico de la selección */}
+              {/* Dynamic summary of selection */}
               {(selectedRoom || selectedGuest || nights || suggestedTotal) && (
                 <div className="border rounded p-3 bg-slate-50 text-xs text-slate-700 space-y-1">
                   {selectedGuest && (
                     <p>
-                      <span className="font-semibold">Huésped:</span>{" "}
+                      <span className="font-semibold">Guest:</span>{" "}
                       {selectedGuest.name}
                       {selectedGuest.email ? ` (${selectedGuest.email})` : ""}
                     </p>
@@ -418,38 +412,34 @@ export default function ReservationFormPage() {
 
                   {selectedRoom && (
                     <p>
-                      <span className="font-semibold">Habitación:</span>{" "}
-                      Hab {selectedRoom.number} (piso {selectedRoom.floor}){" "}
-                      {selectedRoom.roomType
-                        ? `· ${selectedRoom.roomType.name}`
-                        : ""}
+                      <span className="font-semibold">Room:</span> Room{" "}
+                      {selectedRoom.number} (floor {selectedRoom.floor}){" "}
+                      {selectedRoom.roomType ? `· ${selectedRoom.roomType.name}` : ""}
                     </p>
                   )}
 
                   {selectedRoom?.roomType?.basePrice != null && (
                     <p>
-                      <span className="font-semibold">Tarifa base:</span>{" "}
-                      {formatCurrency(selectedRoom.roomType.basePrice)} por noche
+                      <span className="font-semibold">Base rate:</span>{" "}
+                      {formatCurrency(selectedRoom.roomType.basePrice)} per night
                     </p>
                   )}
 
                   {nights && (
                     <p>
-                      <span className="font-semibold">Noches:</span> {nights}{" "}
-                      ({form.checkIn && formatDate(form.checkIn)} →{" "}
+                      <span className="font-semibold">Nights:</span> {nights} (
+                      {form.checkIn && formatDate(form.checkIn)} →{" "}
                       {form.checkOut && formatDate(form.checkOut)})
                     </p>
                   )}
 
                   {suggestedTotal != null && (
                     <p>
-                      <span className="font-semibold">
-                        Importe estimado de reserva:
-                      </span>{" "}
+                      <span className="font-semibold">Estimated total amount:</span>{" "}
                       {formatCurrency(suggestedTotal)}
                       <span className="text-slate-500">
                         {" "}
-                        (se recalcula en el backend al guardar)
+                        (recalculated in backend upon save)
                       </span>
                     </p>
                   )}
@@ -463,10 +453,10 @@ export default function ReservationFormPage() {
                   onClick={handleCancel}
                   disabled={loading}
                 >
-                  Cancelar
+                  Cancel
                 </Button>
                 <Button type="submit" disabled={loading}>
-                  {isEdit ? "Guardar cambios" : "Crear reserva"}
+                  {isEdit ? "Save changes" : "Create booking"}
                 </Button>
               </div>
             </form>

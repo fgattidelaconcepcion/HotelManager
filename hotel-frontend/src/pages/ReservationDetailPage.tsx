@@ -85,7 +85,7 @@ export default function ReservationDetailPage() {
   };
 
   const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("es-UY", {
+    new Intl.NumberFormat("en-UY", {
       style: "currency",
       currency: "UYU",
       minimumFractionDigits: 0,
@@ -93,11 +93,11 @@ export default function ReservationDetailPage() {
 
   const getBookingStatusLabel = (status: string) => {
     const lower = status.toLowerCase();
-    if (lower === "pending") return "Pendiente";
-    if (lower === "confirmed") return "Confirmada";
-    if (lower === "cancelled" || lower === "canceled") return "Cancelada";
-    if (lower === "checked_in") return "Check-in realizado";
-    if (lower === "checked_out") return "Check-out realizado";
+    if (lower === "pending") return "Pending";
+    if (lower === "confirmed") return "Confirmed";
+    if (lower === "cancelled" || lower === "canceled") return "Cancelled";
+    if (lower === "checked_in") return "Checked in";
+    if (lower === "checked_out") return "Checked out";
     return status;
   };
 
@@ -114,11 +114,11 @@ export default function ReservationDetailPage() {
   const getMethodLabel = (method: Payment["method"]) => {
     switch (method) {
       case "cash":
-        return "Efectivo";
+        return "Cash";
       case "card":
-        return "Tarjeta";
+        return "Card";
       case "transfer":
-        return "Transferencia";
+        return "Bank transfer";
       default:
         return method;
     }
@@ -127,11 +127,11 @@ export default function ReservationDetailPage() {
   const getStatusLabel = (status: PaymentStatus) => {
     switch (status) {
       case "pending":
-        return "Pendiente";
+        return "Pending";
       case "completed":
-        return "Completado";
+        return "Completed";
       case "failed":
-        return "Fallido";
+        return "Failed";
       default:
         return status;
     }
@@ -155,7 +155,7 @@ export default function ReservationDetailPage() {
       console.error("Error loading booking detail", err);
       setError(
         err?.response?.data?.error ||
-          "No se pudo cargar la reserva. Intenta nuevamente."
+          "Could not load the reservation. Please try again."
       );
     } finally {
       setLoading(false);
@@ -172,7 +172,7 @@ export default function ReservationDetailPage() {
       setPayments(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Error loading payments for booking", err);
-      // no lo tomo como error crítico
+      // not critical
     } finally {
       setLoadingPayments(false);
     }
@@ -180,7 +180,7 @@ export default function ReservationDetailPage() {
 
   useEffect(() => {
     if (!id || isNaN(bookingIdNumber)) {
-      setError("ID de reserva inválido.");
+      setError("Invalid reservation ID.");
       setLoading(false);
       return;
     }
@@ -197,17 +197,17 @@ export default function ReservationDetailPage() {
   const totalPrice = booking?.totalPrice ?? 0;
   const remaining = totalPrice - totalPaid;
 
-  let paymentStatusLabel = "Sin pagos";
+  let paymentStatusLabel = "No payments";
   let paymentStatusVariant: "success" | "warning" | "danger" = "danger";
 
   if (totalPaid <= 0) {
-    paymentStatusLabel = "Sin pagos";
+    paymentStatusLabel = "No payments";
     paymentStatusVariant = "danger";
   } else if (remaining > 0) {
-    paymentStatusLabel = "Parcialmente pagada";
+    paymentStatusLabel = "Partially paid";
     paymentStatusVariant = "warning";
   } else {
-    paymentStatusLabel = "Totalmente pagada";
+    paymentStatusLabel = "Fully paid";
     paymentStatusVariant = "success";
   }
 
@@ -225,28 +225,26 @@ export default function ReservationDetailPage() {
 
     const current = (booking.status || "").toString().toLowerCase() as BookingStatus;
 
-    // Reglas simples de transición
+    // Simple transition rules
     if (current === "cancelled" || current === "checked_out") {
-      alert("Esta reserva ya está finalizada y no puede cambiar de estado.");
+      alert("This reservation is already finished and its status can't be changed.");
       return;
     }
 
     let actionLabel = "";
-    if (nextStatus === "confirmed") actionLabel = "confirmar esta reserva";
-    if (nextStatus === "cancelled") actionLabel = "cancelar esta reserva";
-    if (nextStatus === "checked_in") actionLabel = "registrar el check-in";
-    if (nextStatus === "checked_out") actionLabel = "registrar el check-out";
+    if (nextStatus === "confirmed") actionLabel = "confirm this reservation";
+    if (nextStatus === "cancelled") actionLabel = "cancel this reservation";
+    if (nextStatus === "checked_in") actionLabel = "register check-in";
+    if (nextStatus === "checked_out") actionLabel = "register check-out";
 
-    const ok = window.confirm(
-      `¿Seguro que quieres ${actionLabel}?`
-    );
+    const ok = window.confirm(`Are you sure you want to ${actionLabel}?`);
     if (!ok) return;
 
     try {
       setUpdatingStatus(true);
       setError(null);
 
-      // 👇 AJUSTE IMPORTANTE: usamos /bookings/:id/status
+      // uses /bookings/:id/status
       await api.patch(`/bookings/${booking.id}/status`, {
         status: nextStatus,
       });
@@ -256,7 +254,7 @@ export default function ReservationDetailPage() {
       console.error("Error updating booking status", err);
       setError(
         err?.response?.data?.error ||
-          "No se pudo actualizar el estado de la reserva. Intenta nuevamente."
+          "Could not update reservation status. Please try again."
       );
     } finally {
       setUpdatingStatus(false);
@@ -280,7 +278,7 @@ export default function ReservationDetailPage() {
           disabled={updatingStatus}
           onClick={() => handleChangeStatus("confirmed")}
         >
-          Confirmar
+          Confirm
         </Button>
       );
       buttons.push(
@@ -292,7 +290,7 @@ export default function ReservationDetailPage() {
           disabled={updatingStatus}
           onClick={() => handleChangeStatus("cancelled")}
         >
-          Cancelar
+          Cancel
         </Button>
       );
     } else if (current === "confirmed") {
@@ -317,7 +315,7 @@ export default function ReservationDetailPage() {
           disabled={updatingStatus}
           onClick={() => handleChangeStatus("cancelled")}
         >
-          Cancelar
+          Cancel
         </Button>
       );
     } else if (current === "checked_in") {
@@ -338,21 +336,17 @@ export default function ReservationDetailPage() {
     if (buttons.length === 0) {
       return (
         <p className="text-xs text-gray-500">
-          Esta reserva ya está finalizada. No se pueden realizar más cambios de estado.
+          This reservation is finished. No further status changes can be made.
         </p>
       );
     }
 
     return (
       <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs text-gray-500 mr-1">
-          Cambiar estado:
-        </span>
+        <span className="text-xs text-gray-500 mr-1">Change status:</span>
         {buttons}
         {updatingStatus && (
-          <span className="text-xs text-gray-500">
-            Actualizando estado...
-          </span>
+          <span className="text-xs text-gray-500">Updating status...</span>
         )}
       </div>
     );
@@ -362,12 +356,12 @@ export default function ReservationDetailPage() {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Detalle de reserva"
-          description="Cargando información de la reserva..."
+          title="Reservation details"
+          description="Loading reservation information..."
         />
         <Card>
           <CardBody>
-            <p className="text-sm text-gray-500">Cargando...</p>
+            <p className="text-sm text-gray-500">Loading...</p>
           </CardBody>
         </Card>
       </div>
@@ -378,18 +372,18 @@ export default function ReservationDetailPage() {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Detalle de reserva"
-          description="No se pudo cargar la reserva."
+          title="Reservation details"
+          description="Could not load the reservation."
           actions={
             <Button type="button" onClick={handleGoBack}>
-              Volver a reservas
+              Back to reservations
             </Button>
           }
         />
         <Card>
           <CardBody>
             <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
-              {error || "Reserva no encontrada."}
+              {error || "Reservation not found."}
             </div>
           </CardBody>
         </Card>
@@ -400,30 +394,28 @@ export default function ReservationDetailPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`Reserva #${booking.id}`}
-        description={`Detalle completo de la reserva.`}
+        title={`Reservation #${booking.id}`}
+        description="Full reservation details."
         actions={
           <div className="flex gap-2">
             <Button type="button" variant="ghost" onClick={handleGoBack}>
-              Volver a reservas
+              Back to reservations
             </Button>
             <Button type="button" onClick={handleGoToAddPayment}>
-              Agregar pago
+              Add payment
             </Button>
           </div>
         }
       />
 
-      {/* Datos principales de la reserva */}
+      {/* Main reservation data */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <h3 className="font-semibold text-gray-800">
-                Información general
-              </h3>
+              <h3 className="font-semibold text-gray-800">General information</h3>
               <p className="text-sm">
-                <span className="font-medium text-gray-700">Huésped:</span>{" "}
+                <span className="font-medium text-gray-700">Guest:</span>{" "}
                 {booking.guest?.name || "-"}
               </p>
               <p className="text-sm">
@@ -431,21 +423,19 @@ export default function ReservationDetailPage() {
                 {booking.guest?.email || "-"}
               </p>
               <p className="text-sm">
-                <span className="font-medium text-gray-700">Habitación:</span>{" "}
+                <span className="font-medium text-gray-700">Room:</span>{" "}
                 {booking.room
-                  ? `Hab ${booking.room.number} (piso ${booking.room.floor})`
+                  ? `Room ${booking.room.number} (floor ${booking.room.floor})`
                   : "-"}
               </p>
               <p className="text-sm">
-                <span className="font-medium text-gray-700">
-                  Tipo de habitación:
-                </span>{" "}
+                <span className="font-medium text-gray-700">Room type:</span>{" "}
                 {booking.room?.roomType?.name || "-"}
               </p>
             </div>
 
             <div className="space-y-2">
-              <h3 className="font-semibold text-gray-800">Fechas y estado</h3>
+              <h3 className="font-semibold text-gray-800">Dates and status</h3>
               <p className="text-sm">
                 <span className="font-medium text-gray-700">Check-in:</span>{" "}
                 {formatDate(booking.checkIn)}
@@ -455,44 +445,42 @@ export default function ReservationDetailPage() {
                 {formatDate(booking.checkOut)}
               </p>
               <p className="text-sm flex items-center gap-2">
-                <span className="font-medium text-gray-700">Estado actual:</span>{" "}
+                <span className="font-medium text-gray-700">Current status:</span>{" "}
                 <Badge variant={getBookingStatusVariant(booking.status as string)}>
                   {getBookingStatusLabel(booking.status as string)}
                 </Badge>
               </p>
               <p className="text-xs text-gray-500">
-                Creada: {formatDateTime(booking.createdAt)} | Última
-                actualización: {formatDateTime(booking.updatedAt)}
+                Created: {formatDateTime(booking.createdAt)} | Last updated:{" "}
+                {formatDateTime(booking.updatedAt)}
               </p>
 
-              {/* Acciones de cambio de estado */}
+              {/* Status change actions */}
               <div className="mt-3">{renderStatusActions()}</div>
             </div>
           </div>
         </CardBody>
       </Card>
 
-      {/* Resumen de pagos */}
+      {/* Payments summary */}
       <Card>
         <CardBody>
-          <h3 className="font-semibold text-gray-800 mb-3">
-            Resumen de pagos
-          </h3>
+          <h3 className="font-semibold text-gray-800 mb-3">Payments summary</h3>
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <p className="text-xs text-gray-500">Total de la reserva</p>
+              <p className="text-xs text-gray-500">Reservation total</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalPrice)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Total pagado</p>
+              <p className="text-xs text-gray-500">Total paid</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalPaid)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Pendiente</p>
+              <p className="text-xs text-gray-500">Due</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(remaining)}
               </p>
@@ -503,26 +491,24 @@ export default function ReservationDetailPage() {
           </div>
           <div className="mt-4">
             <Button type="button" onClick={handleGoToAddPayment}>
-              Agregar pago para esta reserva
+              Add payment for this reservation
             </Button>
           </div>
         </CardBody>
       </Card>
 
-      {/* Lista de pagos */}
+      {/* Payments list */}
       <Card>
         <CardBody>
-          <h3 className="font-semibold text-gray-800 mb-3">
-            Pagos asociados
-          </h3>
+          <h3 className="font-semibold text-gray-800 mb-3">Related payments</h3>
 
           {loadingPayments && (
-            <p className="text-sm text-gray-500 mb-2">Cargando pagos...</p>
+            <p className="text-sm text-gray-500 mb-2">Loading payments...</p>
           )}
 
           {payments.length === 0 && !loadingPayments && (
             <p className="text-sm text-gray-500">
-              No hay pagos registrados para esta reserva.
+              No payments recorded for this reservation.
             </p>
           )}
 
@@ -535,16 +521,16 @@ export default function ReservationDetailPage() {
                       ID
                     </th>
                     <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Monto
+                      Amount
                     </th>
                     <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Método
+                      Method
                     </th>
                     <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Estado
+                      Status
                     </th>
                     <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Fecha
+                      Date
                     </th>
                   </tr>
                 </thead>
