@@ -9,7 +9,8 @@ const registerSchema = z.object({
   name: z.string().min(2).max(50),
   email: z.string().email(),
   password: z.string().min(6),
-  role: z.enum(["admin", "recepcion"]).optional(),
+  // ahora coincide con el enum de Prisma: admin | receptionist
+  role: z.enum(["admin", "receptionist"]).optional(),
 });
 
 const loginSchema = z.object({
@@ -42,7 +43,8 @@ const authController = {
           name,
           email,
           password: hashed,
-          role: role || "recepcion",
+          // si no se envía role, usamos el default "receptionist"
+          role: role ?? "receptionist",
         },
         select: { id: true, name: true, email: true, role: true },
       });
@@ -80,10 +82,11 @@ const authController = {
         return res.status(401).json({ error: "Contraseña incorrecta" });
       }
 
+      // usamos tu helper generateToken para incluir el rol
       const token = generateToken({
         id: user.id,
         email: user.email,
-        role: user.role,
+        role: user.role, // "admin" | "receptionist"
       });
 
       return res.status(200).json({

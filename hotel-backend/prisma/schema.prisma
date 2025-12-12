@@ -9,17 +9,36 @@ datasource db {
 
 /**
  * ============================
+ * ENUMS
+ * ============================
+ */
+
+enum UserRole {
+  admin
+  receptionist
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+  checked_in
+  checked_out
+}
+
+/**
+ * ============================
  * MODELO USER
  * ============================
  */
 
 model User {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   name      String
-  email     String   @unique
+  email     String    @unique
   password  String
-  role      String   @default("recepcion")
-  createdAt DateTime @default(now())
+  role      UserRole  @default(receptionist)
+  createdAt DateTime  @default(now())
 
   bookings Booking[]
 }
@@ -32,12 +51,13 @@ model User {
 
 model RoomType {
   id        Int    @id @default(autoincrement())
-  name      String
+  name      String @unique
   basePrice Float
   capacity  Int
 
   rooms Room[]
 }
+
 
 /**
  * ============================
@@ -49,7 +69,7 @@ model Room {
   id          Int     @id @default(autoincrement())
   number      String  @unique
   floor       Int
-  status      String  @default("disponible") // coherente con tu backend
+  status      String  @default("disponible")
   description String?
   roomTypeId  Int
 
@@ -80,16 +100,8 @@ model Guest {
  * ============================
  */
 
-enum BookingStatus {
-  pending
-  confirmed
-  cancelled
-  checked_in
-  checked_out
-}
-
 model Booking {
-  id         Int      @id @default(autoincrement())
+  id         Int           @id @default(autoincrement())
   userId     Int?
   guestId    Int?
   roomId     Int
@@ -103,7 +115,7 @@ model Booking {
   room     Room      @relation(fields: [roomId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])
   guest    Guest?    @relation(fields: [guestId], references: [id])
-  payments Payment[] // 👈 relación inversa con Payment
+  payments Payment[]
 }
 
 /**
@@ -116,9 +128,9 @@ model Payment {
   id        Int      @id @default(autoincrement())
   booking   Booking  @relation(fields: [bookingId], references: [id])
   bookingId Int
-  amount    Int // o Float/Decimal si querés más precisión
-  method    String // "cash", "card", "transfer", etc.
-  status    String // "pending", "completed", "failed", etc.
+  amount    Int
+  method    String
+  status    String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
