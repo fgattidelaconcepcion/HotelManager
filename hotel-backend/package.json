@@ -8,7 +8,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/services/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "migrate": "npx dotenv-cli -- npx prisma migrate dev --name init --schema=prisma/schema.prisma",
+    "migrate": "prisma migrate deploy",
     "generate": "npx dotenv-cli -- npx prisma generate",
     "seed": "npx prisma db seed"
   },

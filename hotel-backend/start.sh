@@ -1,8 +1,6 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -e
 
-npm install
 npm run build
-
 npx prisma migrate deploy
-node dist/services/server.js
+node dist/server.js
