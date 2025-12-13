@@ -1,7 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -e
-
-cd hotel-backend
 
 npm install
 npm run build
