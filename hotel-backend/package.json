@@ -2,8 +2,8 @@
   "name": "hotel-backend",
   "version": "1.0.0",
   "description": "Backend for the hotel management app",
-  "main": "dist/server.js",
-  "type": "commonjs",
+  "main": "dist/services/server.js",
+"start": "node dist/services/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/services/server.ts",
     "build": "tsc",
