@@ -3,14 +3,12 @@
   "version": "1.0.0",
   "description": "Backend for the hotel management app",
   "main": "dist/services/server.js",
-"start": "node dist/services/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/services/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "build": "prisma generate && tsc",
+    "start": "node dist/services/server.js",
     "migrate": "prisma migrate deploy",
-    "generate": "npx dotenv-cli -- npx prisma generate",
-    "seed": "npx prisma db seed"
+    "seed": "prisma db seed"
   },
   "keywords": ["node", "express", "typescript", "hotel", "backend"],
   "author": "Franco Gatti",
@@ -32,7 +30,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
     "@types/node": "^24.9.2",
-    "dotenv-cli": "^11.0.0",
     "prisma": "^6.18.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
