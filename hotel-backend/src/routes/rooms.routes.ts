@@ -2,7 +2,6 @@ import { Router } from "express";
 import {
   getAllRooms,
   createRoom,
-  getAvailableRooms,
   deleteRoom,
   updateRoom,
   getRoomById,
@@ -10,13 +9,11 @@ import {
 
 const router = Router();
 
-// Obtener habitaciones disponibles
-router.get("/available", getAvailableRooms);
-
-router.get("/:id", getRoomById);
-
-// Obtener todas
+// Obtener todas las habitaciones
 router.get("/", getAllRooms);
+
+// Obtener habitación por ID
+router.get("/:id", getRoomById);
 
 // Crear nueva habitación
 router.post("/", createRoom);
