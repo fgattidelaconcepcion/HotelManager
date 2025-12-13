@@ -26,10 +26,10 @@ const updateRoomSchema = createRoomSchema.partial();
 
 export const getAllRooms = async (req: Request, res: Response) => {
   try {
-    const { status, roomTypeId, search, page = "1", limit = "20" } = req.query;
+    const { status, roomTypeId, search } = req.query;
 
-    const pageNum = Number(page);
-    const limitNum = Number(limit);
+    const pageNum = Number(req.query.page) || 1;
+    const limitNum = Number(req.query.limit) || 20;
     const skip = (pageNum - 1) * limitNum;
 
     const where: Prisma.RoomWhereInput = {};
@@ -44,8 +44,8 @@ export const getAllRooms = async (req: Request, res: Response) => {
 
     if (search && typeof search === "string") {
       where.OR = [
-        { number: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
+        { number: { contains: search } },
+        { description: { contains: search } },
       ];
     }
 
