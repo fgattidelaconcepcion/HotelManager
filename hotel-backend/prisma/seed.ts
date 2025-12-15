@@ -117,45 +117,50 @@ async function main() {
   });
 
   /* =========================
-     BOOKINGS
+     BOOKINGS & PAYMENTS (DEMO SAFE)
+     - Evita duplicados en cada deploy
   ========================= */
 
-  const booking1 = await prisma.booking.create({
-    data: {
-      roomId: room101.id,
-      guestId: guest1.id,
-      userId: receptionist.id,
-      checkIn: new Date("2025-12-15"),
-      checkOut: new Date("2025-12-18"),
-      totalPrice: 240,
-      status: "confirmed",
-    },
-  });
+  const existingBookings = await prisma.booking.count();
 
-  const booking2 = await prisma.booking.create({
-    data: {
-      roomId: room301.id,
-      guestId: guest2.id,
-      userId: admin.id,
-      checkIn: new Date("2025-12-20"),
-      checkOut: new Date("2025-12-25"),
-      totalPrice: 1000,
-      status: "pending",
-    },
-  });
+  if (existingBookings === 0) {
+    const booking1 = await prisma.booking.create({
+      data: {
+        roomId: room101.id,
+        guestId: guest1.id,
+        userId: receptionist.id,
+        checkIn: new Date("2025-12-15"),
+        checkOut: new Date("2025-12-18"),
+        totalPrice: 240,
+        status: "confirmed",
+      },
+    });
 
-  /* =========================
-     PAYMENTS
-  ========================= */
+    await prisma.booking.create({
+      data: {
+        roomId: room301.id,
+        guestId: guest2.id,
+        userId: admin.id,
+        checkIn: new Date("2025-12-20"),
+        checkOut: new Date("2025-12-25"),
+        totalPrice: 1000,
+        status: "pending",
+      },
+    });
 
-  await prisma.payment.create({
-    data: {
-      bookingId: booking1.id,
-      amount: 240,
-      method: "card",
-      status: "completed",
-    },
-  });
+    await prisma.payment.create({
+      data: {
+        bookingId: booking1.id,
+        amount: 240,
+        method: "card",
+        status: "completed",
+      },
+    });
+
+    console.log("📦 Demo bookings & payments created");
+  } else {
+    console.log("📦 Bookings already exist, skipping demo bookings & payments");
+  }
 
   console.log("✅ Seed completed successfully");
 }
