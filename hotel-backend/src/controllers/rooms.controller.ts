@@ -55,6 +55,9 @@ export const getAllRooms = async (req: Request, res: Response) => {
         orderBy: { number: "asc" },
         skip,
         take: limitNum,
+        include: {
+          roomType: true, // ✅ para que el front muestre Type y Base price
+        },
       }),
       prisma.room.count({ where }),
     ]);
@@ -96,6 +99,9 @@ export const createRoom = async (req: Request, res: Response) => {
 
     const room = await prisma.room.create({
       data: parsed.data,
+      include: {
+        roomType: true, // ✅ devuelve también el tipo
+      },
     });
 
     return res.status(201).json({
@@ -139,6 +145,9 @@ export const getRoomById = async (req: Request, res: Response) => {
 
     const room = await prisma.room.findUnique({
       where: { id },
+      include: {
+        roomType: true, // ✅ para editar/ver detalle con el tipo
+      },
     });
 
     if (!room) {
@@ -182,12 +191,16 @@ export const updateRoom = async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         error: "Datos inválidos",
+        details: parsed.error.flatten(),
       });
     }
 
     const updated = await prisma.room.update({
       where: { id },
       data: parsed.data,
+      include: {
+        roomType: true, // ✅ devuelve roomType actualizado
+      },
     });
 
     return res.status(200).json({
