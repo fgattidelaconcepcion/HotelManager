@@ -4,3 +4,8 @@
   status = 200
   force = true
 
+# SPA fallback (React Router)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
