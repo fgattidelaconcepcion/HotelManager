@@ -50,16 +50,9 @@ async function checkRoomAvailability(
 ) {
   const where: Prisma.BookingWhereInput = {
     roomId,
-    status: {
-      not: "cancelled",
-    },
-    // solapamiento: (existing.checkIn < newCheckOut) && (existing.checkOut > newCheckIn)
-    checkIn: {
-      lt: checkOut,
-    },
-    checkOut: {
-      gt: checkIn,
-    },
+    status: { not: "cancelled" },
+    checkIn: { lt: checkOut },
+    checkOut: { gt: checkIn },
   };
 
   if (excludeBookingId) {
@@ -67,9 +60,29 @@ async function checkRoomAvailability(
   }
 
   const overlapping = await prisma.booking.findFirst({ where });
-
   return !overlapping;
 }
+
+/* =====================================
+      SELECTS SEGUROS (ANTI-500)
+===================================== */
+
+const guestSelect = {
+  id: true,
+  name: true,
+  email: true,
+  phone: true,
+  createdAt: true,
+  updatedAt: true,
+};
+
+const userSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  createdAt: true,
+};
 
 /* =====================================
       CONTROLADORES
@@ -82,10 +95,8 @@ export const getAllBookings = async (req: Request, res: Response) => {
 
     const where: Prisma.BookingWhereInput = {};
 
-    if (status && typeof status === "string") {
-      if (Object.values(BookingStatus).includes(status as BookingStatus)) {
-        where.status = status as BookingStatus;
-      }
+    if (status && Object.values(BookingStatus).includes(status as BookingStatus)) {
+      where.status = status as BookingStatus;
     }
 
     if (roomId && !isNaN(Number(roomId))) {
@@ -99,39 +110,28 @@ export const getAllBookings = async (req: Request, res: Response) => {
     const dateFilters: Prisma.BookingWhereInput[] = [];
 
     if (from) {
-      const fromDate = new Date(from as string);
-      if (!isNaN(fromDate.getTime())) {
-        dateFilters.push({ checkIn: { gte: fromDate } });
-      }
+      const d = new Date(from as string);
+      if (!isNaN(d.getTime())) dateFilters.push({ checkIn: { gte: d } });
     }
 
     if (to) {
-      const toDate = new Date(to as string);
-      if (!isNaN(toDate.getTime())) {
-        dateFilters.push({ checkOut: { lte: toDate } });
-      }
+      const d = new Date(to as string);
+      if (!isNaN(d.getTime())) dateFilters.push({ checkOut: { lte: d } });
     }
 
-    if (dateFilters.length) {
-      where.AND = dateFilters;
-    }
+    if (dateFilters.length) where.AND = dateFilters;
 
     const bookings = await prisma.booking.findMany({
       where,
       orderBy: { checkIn: "desc" },
       include: {
-        room: {
-          include: { roomType: true },
-        },
-        guest: true,
-        user: true,
+        room: { include: { roomType: true } },
+        guest: { select: guestSelect },
+        user: { select: userSelect },
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      data: bookings,
-    });
+    return res.status(200).json({ success: true, data: bookings });
   } catch (error) {
     console.error("Error en getAllBookings:", error);
     return res.status(500).json({
@@ -145,32 +145,27 @@ export const getAllBookings = async (req: Request, res: Response) => {
 export const getBookingById = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-
     if (isNaN(id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "ID de reserva inválido" });
+      return res.status(400).json({ success: false, error: "ID inválido" });
     }
 
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: {
         room: { include: { roomType: true } },
-        guest: true,
-        user: true,
+        guest: { select: guestSelect },
+        user: { select: userSelect },
       },
     });
 
     if (!booking) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Reserva no encontrada" });
+      return res.status(404).json({
+        success: false,
+        error: "Reserva no encontrada",
+      });
     }
 
-    return res.status(200).json({
-      success: true,
-      data: booking,
-    });
+    return res.status(200).json({ success: true, data: booking });
   } catch (error) {
     console.error("Error en getBookingById:", error);
     return res.status(500).json({
@@ -184,7 +179,6 @@ export const getBookingById = async (req: Request, res: Response) => {
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const parsed = createBookingSchema.safeParse(req.body);
-
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
@@ -198,7 +192,7 @@ export const createBooking = async (req: Request, res: Response) => {
     if (data.checkOut <= data.checkIn) {
       return res.status(400).json({
         success: false,
-        error: "La fecha de check-out debe ser posterior al check-in",
+        error: "Check-out debe ser posterior a check-in",
       });
     }
 
@@ -208,21 +202,22 @@ export const createBooking = async (req: Request, res: Response) => {
     });
 
     if (!room) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Habitación no encontrada" });
+      return res.status(404).json({
+        success: false,
+        error: "Habitación no encontrada",
+      });
     }
 
-    const isAvailable = await checkRoomAvailability(
+    const available = await checkRoomAvailability(
       data.roomId,
       data.checkIn,
       data.checkOut
     );
 
-    if (!isAvailable) {
+    if (!available) {
       return res.status(409).json({
         success: false,
-        error: "La habitación no está disponible en ese rango de fechas",
+        error: "La habitación no está disponible",
       });
     }
 
@@ -241,15 +236,12 @@ export const createBooking = async (req: Request, res: Response) => {
       },
       include: {
         room: { include: { roomType: true } },
-        guest: true,
-        user: true,
+        guest: { select: guestSelect },
+        user: { select: userSelect },
       },
     });
 
-    return res.status(201).json({
-      success: true,
-      data: booking,
-    });
+    return res.status(201).json({ success: true, data: booking });
   } catch (error) {
     console.error("Error en createBooking:", error);
     return res.status(500).json({
@@ -264,13 +256,10 @@ export const updateBooking = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     if (isNaN(id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "ID de reserva inválido" });
+      return res.status(400).json({ success: false, error: "ID inválido" });
     }
 
     const parsed = updateBookingSchema.safeParse(req.body);
-
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
@@ -285,69 +274,68 @@ export const updateBooking = async (req: Request, res: Response) => {
     });
 
     if (!existing) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Reserva no encontrada" });
+      return res.status(404).json({
+        success: false,
+        error: "Reserva no encontrada",
+      });
     }
 
-    const newRoomId = parsed.data.roomId ?? existing.roomId;
-    const newCheckIn = parsed.data.checkIn ?? existing.checkIn;
-    const newCheckOut = parsed.data.checkOut ?? existing.checkOut;
+    const roomId = parsed.data.roomId ?? existing.roomId;
+    const checkIn = parsed.data.checkIn ?? existing.checkIn;
+    const checkOut = parsed.data.checkOut ?? existing.checkOut;
 
-    if (newCheckOut <= newCheckIn) {
+    if (checkOut <= checkIn) {
       return res.status(400).json({
         success: false,
-        error: "La fecha de check-out debe ser posterior al check-in",
+        error: "Check-out inválido",
       });
     }
 
     const room = await prisma.room.findUnique({
-      where: { id: newRoomId },
+      where: { id: roomId },
       include: { roomType: true },
     });
 
     if (!room) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Habitación no encontrada" });
-    }
-
-    const isAvailable = await checkRoomAvailability(
-      newRoomId,
-      newCheckIn,
-      newCheckOut,
-      id
-    );
-
-    if (!isAvailable) {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
-        error: "La habitación no está disponible en ese rango de fechas",
+        error: "Habitación no encontrada",
       });
     }
 
-    const nights = calculateNights(newCheckIn, newCheckOut);
+    const available = await checkRoomAvailability(
+      roomId,
+      checkIn,
+      checkOut,
+      id
+    );
+
+    if (!available) {
+      return res.status(409).json({
+        success: false,
+        error: "La habitación no está disponible",
+      });
+    }
+
+    const nights = calculateNights(checkIn, checkOut);
     const totalPrice = nights * room.roomType.basePrice;
 
     const updated = await prisma.booking.update({
       where: { id },
       data: {
-        roomId: newRoomId,
-        checkIn: newCheckIn,
-        checkOut: newCheckOut,
+        roomId,
+        checkIn,
+        checkOut,
         totalPrice,
       },
       include: {
         room: { include: { roomType: true } },
-        guest: true,
-        user: true,
+        guest: { select: guestSelect },
+        user: { select: userSelect },
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      data: updated,
-    });
+    return res.status(200).json({ success: true, data: updated });
   } catch (error) {
     console.error("Error en updateBooking:", error);
     return res.status(500).json({
@@ -362,110 +350,72 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     if (isNaN(id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "ID de reserva inválido" });
+      return res.status(400).json({ success: false, error: "ID inválido" });
     }
 
     const parsed = updateStatusSchema.safeParse(req.body);
-
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
         error: "Estado inválido",
-        details: parsed.error.flatten(),
       });
     }
 
-    const nextStatus = parsed.data.status;
-
-    // 1) Traer la reserva actual
-    const existing = await prisma.booking.findUnique({
-      where: { id },
-    });
-
-    if (!existing) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Reserva no encontrada" });
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        error: "Reserva no encontrada",
+      });
     }
 
-    const currentStatus = existing.status;
+    const current = booking.status;
+    const next = parsed.data.status;
 
-    // 2) Reglas de transición de estado
-    if (currentStatus === "cancelled" || currentStatus === "checked_out") {
+    const transitions: Record<BookingStatus, BookingStatus[]> = {
+      pending: ["confirmed", "cancelled"],
+      confirmed: ["checked_in", "cancelled"],
+      checked_in: ["checked_out"],
+      checked_out: [],
+      cancelled: [],
+    };
+
+    if (!transitions[current].includes(next)) {
       return res.status(400).json({
         success: false,
-        error:
-          "Esta reserva ya está finalizada y no puede cambiar de estado.",
+        error: `No se puede pasar de ${current} a ${next}`,
       });
     }
 
-    let allowedNextStatuses: BookingStatus[] = [];
-
-    if (currentStatus === "pending") {
-      allowedNextStatuses = ["confirmed", "cancelled"];
-    } else if (currentStatus === "confirmed") {
-      allowedNextStatuses = ["checked_in", "cancelled"];
-    } else if (currentStatus === "checked_in") {
-      allowedNextStatuses = ["checked_out"];
-    }
-
-    if (!allowedNextStatuses.includes(nextStatus)) {
-      return res.status(400).json({
-        success: false,
-        error: `No se puede cambiar el estado de '${currentStatus}' a '${nextStatus}'.`,
-      });
-    }
-
-    // 3) Actualizar estado si es válido
     const updated = await prisma.booking.update({
       where: { id },
-      data: {
-        status: nextStatus,
-      },
+      data: { status: next },
       include: {
         room: { include: { roomType: true } },
-        guest: true,
-        user: true,
+        guest: { select: guestSelect },
+        user: { select: userSelect },
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      data: updated,
-    });
-  } catch (error: any) {
+    return res.status(200).json({ success: true, data: updated });
+  } catch (error) {
     console.error("Error en updateBookingStatus:", error);
-
-    if (error.code === "P2025") {
-      return res
-        .status(404)
-        .json({ success: false, error: "Reserva no encontrada" });
-    }
-
     return res.status(500).json({
       success: false,
-      error: "Error al actualizar el estado de la reserva",
+      error: "Error al actualizar el estado",
     });
   }
 };
-
 
 // DELETE /api/bookings/:id
 export const deleteBooking = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-
     if (isNaN(id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "ID de reserva inválido" });
+      return res.status(400).json({ success: false, error: "ID inválido" });
     }
 
-    await prisma.booking.delete({
-      where: { id },
-    });
+    await prisma.booking.delete({ where: { id } });
 
     return res.status(200).json({
       success: true,
@@ -475,9 +425,10 @@ export const deleteBooking = async (req: Request, res: Response) => {
     console.error("Error en deleteBooking:", error);
 
     if (error.code === "P2025") {
-      return res
-        .status(404)
-        .json({ success: false, error: "Reserva no encontrada" });
+      return res.status(404).json({
+        success: false,
+        error: "Reserva no encontrada",
+      });
     }
 
     return res.status(500).json({
