@@ -85,15 +85,18 @@ model Room {
  */
 
 model Guest {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String?  @unique
-  phone     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             Int      @id @default(autoincrement())
+  name           String
+  email          String?  @unique
+  phone          String?
+  documentNumber String?
+  address        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   bookings Booking[]
 }
+
 
 /**
  * ============================

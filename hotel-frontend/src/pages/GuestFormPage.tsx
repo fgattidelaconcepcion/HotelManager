@@ -56,8 +56,7 @@ const loadGuest = async () => {
     setError(null);
 
     const res = await api.get(`/guests/${guestId}`);
-
-    const guest = res.data?.guest ?? res.data?.data ?? res.data; // <-- clave
+    const guest = res.data?.guest ?? res.data?.data ?? res.data;
 
     setForm({
       name: guest?.name ?? "",
@@ -66,11 +65,15 @@ const loadGuest = async () => {
       documentNumber: guest?.documentNumber ?? "",
       address: guest?.address ?? "",
     });
+  } catch (err: any) {
+    setError(
+      err?.response?.data?.error ||
+        "Could not load guest. Please try again."
+    );
   } finally {
     setLoadingGuest(false);
   }
 };
-
 
 
   useEffect(() => {

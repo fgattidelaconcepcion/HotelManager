@@ -3,11 +3,23 @@ import prisma from "../services/prisma";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 
+// Helper: string opcional que convierte "" -> null
+const nullableText = z
+  .string()
+  .optional()
+  .or(z.literal("").transform(() => null));
+
 // Validación con Zod
 const guestSchema = z.object({
   name: z.string().min(1, "El nombre es obligatorio"),
-  email: z.string().email("Email inválido").optional().or(z.literal("").transform(() => null)),
-  phone: z.string().optional().or(z.literal("").transform(() => null)),
+  email: z
+    .string()
+    .email("Email inválido")
+    .optional()
+    .or(z.literal("").transform(() => null)),
+  phone: nullableText,
+  documentNumber: nullableText,
+  address: nullableText,
 });
 
 const updateGuestSchema = guestSchema.partial();
@@ -18,13 +30,15 @@ const updateGuestSchema = guestSchema.partial();
 export const getAllGuests = async (req: Request, res: Response) => {
   try {
     const { search } = req.query;
-    let where: Prisma.GuestWhereInput = {};
+    const where: Prisma.GuestWhereInput = {};
 
     if (search && typeof search === "string") {
       where.OR = [
-        { name:  { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+        { documentNumber: { contains: search, mode: "insensitive" } },
+        { address: { contains: search, mode: "insensitive" } },
       ];
     }
 
@@ -36,7 +50,9 @@ export const getAllGuests = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, data: guests });
   } catch (error) {
     console.error("Error en getAllGuests:", error);
-    return res.status(500).json({ success: false, error: "Error al obtener huéspedes" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Error al obtener huéspedes" });
   }
 };
 
@@ -47,16 +63,24 @@ export const getGuestById = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
 
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ success: false, error: "ID inválido" });
+    }
+
     const guest = await prisma.guest.findUnique({ where: { id } });
 
     if (!guest) {
-      return res.status(404).json({ success: false, message: "Huésped no encontrado" });
+      return res
+        .status(404)
+        .json({ success: false, error: "Huésped no encontrado" });
     }
 
-    return res.json({ success: true, guest });
+    return res.json({ success: true, data: guest });
   } catch (error) {
     console.error("Error en getGuestById:", error);
-    return res.status(500).json({ success: false, error: "Error al obtener huésped" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Error al obtener huésped" });
   }
 };
 
@@ -70,7 +94,8 @@ export const createGuest = async (req: Request, res: Response) => {
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        error: parsed.error.flatten().fieldErrors,
+        error: "Datos inválidos",
+        details: parsed.error.flatten().fieldErrors,
       });
     }
 
@@ -78,11 +103,19 @@ export const createGuest = async (req: Request, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: "Huésped creado correctamente",
-      guest: newGuest,
+      data: newGuest,
     });
   } catch (error: any) {
     console.error("Error en createGuest:", error);
+
+    // Unique violation (por ejemplo email duplicado)
+    if (error?.code === "P2002") {
+      return res.status(400).json({
+        success: false,
+        error: "Ya existe un huésped con ese email.",
+      });
+    }
+
     return res.status(500).json({
       success: false,
       error: "Error al crear huésped",
@@ -97,11 +130,16 @@ export const updateGuest = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
 
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ success: false, error: "ID inválido" });
+    }
+
     const parsed = updateGuestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        error: parsed.error.flatten().fieldErrors,
+        error: "Datos inválidos",
+        details: parsed.error.flatten().fieldErrors,
       });
     }
 
@@ -110,10 +148,26 @@ export const updateGuest = async (req: Request, res: Response) => {
       data: parsed.data,
     });
 
-    return res.json({ success: true, guest: updated });
-  } catch (error) {
+    return res.json({ success: true, data: updated });
+  } catch (error: any) {
     console.error("Error en updateGuest:", error);
-    return res.status(500).json({ success: false, error: "Error al actualizar huésped" });
+
+    if (error?.code === "P2025") {
+      return res
+        .status(404)
+        .json({ success: false, error: "Huésped no encontrado" });
+    }
+
+    if (error?.code === "P2002") {
+      return res.status(400).json({
+        success: false,
+        error: "Ya existe un huésped con ese email.",
+      });
+    }
+
+    return res
+      .status(500)
+      .json({ success: false, error: "Error al actualizar huésped" });
   }
 };
 
@@ -124,14 +178,27 @@ export const deleteGuest = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
 
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ success: false, error: "ID inválido" });
+    }
+
     await prisma.guest.delete({ where: { id } });
 
     return res.json({
       success: true,
       message: "Huésped eliminado correctamente",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error en deleteGuest:", error);
-    return res.status(500).json({ success: false, error: "Error al eliminar huésped" });
+
+    if (error?.code === "P2025") {
+      return res
+        .status(404)
+        .json({ success: false, error: "Huésped no encontrado" });
+    }
+
+    return res
+      .status(500)
+      .json({ success: false, error: "Error al eliminar huésped" });
   }
 };

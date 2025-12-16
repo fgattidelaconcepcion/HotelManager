@@ -34,6 +34,31 @@ interface Payment {
   createdAt: string;
 }
 
+function toDate(value: string) {
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function startOfLocalDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfLocalDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function isWithinLocalDay(dateStr: string, day: Date) {
+  const d = toDate(dateStr);
+  if (!d) return false;
+  const start = startOfLocalDay(day);
+  const end = endOfLocalDay(day);
+  return d >= start && d <= end;
+}
+
 export default function Home() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -74,11 +99,8 @@ export default function Home() {
     loadData();
   }, []);
 
+  // ✅ No lo “congelamos”: cada render toma el día actual del usuario
   const today = useMemo(() => new Date(), []);
-  const isSameDay = (d1: Date, d2: Date) =>
-    d1.getFullYear() === d2.getFullYear() &&
-    d1.getMonth() === d2.getMonth() &&
-    d1.getDate() === d2.getDate();
 
   // KPIs
   const totalRooms = rooms.length;
@@ -87,11 +109,18 @@ export default function Home() {
     ["confirmed", "checked_in"].includes(b.status)
   );
 
-  const todaysCheckIns = bookings.filter((b) =>
-    isSameDay(new Date(b.checkIn), today)
+  // ✅ Check-ins / check-outs “de hoy” por rango local (evita bug UTC/Z)
+  // ✅ Y además: sólo cuenta reservas activas (confirmed/checked_in/checked_out)
+  const todaysCheckIns = bookings.filter(
+    (b) =>
+      ["confirmed", "checked_in", "checked_out"].includes(b.status) &&
+      isWithinLocalDay(b.checkIn, today)
   );
-  const todaysCheckOuts = bookings.filter((b) =>
-    isSameDay(new Date(b.checkOut), today)
+
+  const todaysCheckOuts = bookings.filter(
+    (b) =>
+      ["confirmed", "checked_in", "checked_out"].includes(b.status) &&
+      isWithinLocalDay(b.checkOut, today)
   );
 
   const completedPayments = payments.filter((p) => p.status === "completed");
@@ -108,20 +137,23 @@ export default function Home() {
     }).format(value);
 
   const latestBookings = [...bookings]
-    .sort(
-      (a, b) => new Date(b.checkIn).getTime() - new Date(a.checkIn).getTime()
-    )
+    .sort((a, b) => {
+      const aD = toDate(a.checkIn)?.getTime() ?? 0;
+      const bD = toDate(b.checkIn)?.getTime() ?? 0;
+      return bD - aD;
+    })
     .slice(0, 5);
 
   const latestPayments = [...completedPayments]
-    .sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    )
+    .sort((a, b) => {
+      const aD = toDate(a.createdAt)?.getTime() ?? 0;
+      const bD = toDate(b.createdAt)?.getTime() ?? 0;
+      return bD - aD;
+    })
     .slice(0, 5);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader
         title="Dashboard"
         description="Overall hotel summary."
@@ -132,7 +164,6 @@ export default function Home() {
         }
       />
 
-      {/* Welcome */}
       <Card>
         <CardBody>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -152,7 +183,6 @@ export default function Home() {
         </CardBody>
       </Card>
 
-      {/* Main KPIs */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardBody>
@@ -200,9 +230,7 @@ export default function Home() {
         </Card>
       </div>
 
-      {/* Quick lists: latest bookings and payments */}
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Latest bookings */}
         <Card>
           <CardBody>
             <div className="flex items-center justify-between mb-3">
@@ -229,8 +257,8 @@ export default function Home() {
                         Reservation #{b.id}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {new Date(b.checkIn).toLocaleDateString()} →{" "}
-                        {new Date(b.checkOut).toLocaleDateString()}
+                        {toDate(b.checkIn)?.toLocaleDateString() ?? "-"} →{" "}
+                        {toDate(b.checkOut)?.toLocaleDateString() ?? "-"}
                       </p>
                     </div>
                     <Badge
@@ -251,7 +279,6 @@ export default function Home() {
           </CardBody>
         </Card>
 
-        {/* Latest payments */}
         <Card>
           <CardBody>
             <div className="flex items-center justify-between mb-3">
@@ -278,7 +305,7 @@ export default function Home() {
                         Payment #{p.id}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {new Date(p.createdAt).toLocaleString()}
+                        {toDate(p.createdAt)?.toLocaleString() ?? "-"}
                       </p>
                     </div>
                     <p className="text-sm font-semibold">
@@ -292,7 +319,6 @@ export default function Home() {
         </Card>
       </div>
 
-      {/* Error */}
       {error && (
         <Card>
           <CardBody>
@@ -305,3 +331,4 @@ export default function Home() {
     </div>
   );
 }
+
