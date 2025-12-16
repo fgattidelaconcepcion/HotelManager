@@ -89,13 +89,16 @@ model Guest {
   name           String
   email          String?  @unique
   phone          String?
-  documentNumber String?
+
+  documentNumber String?  @map("documentnumber")
   address        String?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   bookings Booking[]
 }
+
 
 
 /**
