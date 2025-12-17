@@ -7,6 +7,7 @@ import cors from "cors";
 import morgan from "morgan";
 
 import mainRouter from "./routes/index";
+import dashboardRoutes from "./routes/dashboard.routes";
 
 const app = express();
 
@@ -23,5 +24,8 @@ app.use((req, res, next) => {
 
 // Rutas principales
 app.use("/api", mainRouter);
+
+
+app.use("/api/dashboard", dashboardRoutes);
 
 export default app;

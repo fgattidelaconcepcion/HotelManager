@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -13,13 +13,7 @@ type BookingStatus =
   | "cancelled"
   | string;
 
-interface Room {
-  id: number;
-  number: string;
-  floor: number;
-}
-
-interface Booking {
+interface LatestBooking {
   id: number;
   status: BookingStatus;
   checkIn: string;
@@ -27,11 +21,25 @@ interface Booking {
   totalPrice: number;
 }
 
-interface Payment {
+interface LatestPayment {
   id: number;
   amount: number;
-  status: "pending" | "completed" | "failed" | string;
+  status: string;
   createdAt: string;
+  bookingId: number;
+}
+
+interface DashboardData {
+  totalRooms: number;
+  occupancyRate: number;
+  activeBookingsCount: number;
+  totalRevenue: number;
+  todaysCheckIns: number;
+  todaysCheckOuts: number;
+  latestBookings: LatestBooking[];
+  latestPayments: LatestPayment[];
+  serverNow?: string | null;
+  tz?: string | null;
 }
 
 function toDate(value: string) {
@@ -39,30 +47,20 @@ function toDate(value: string) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function startOfLocalDay(date: Date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfLocalDay(date: Date) {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
-
-function isWithinLocalDay(dateStr: string, day: Date) {
-  const d = toDate(dateStr);
-  if (!d) return false;
-  const start = startOfLocalDay(day);
-  const end = endOfLocalDay(day);
-  return d >= start && d <= end;
-}
-
 export default function Home() {
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const [data, setData] = useState<DashboardData>({
+    totalRooms: 0,
+    occupancyRate: 0,
+    activeBookingsCount: 0,
+    totalRevenue: 0,
+    todaysCheckIns: 0,
+    todaysCheckOuts: 0,
+    latestBookings: [],
+    latestPayments: [],
+    serverNow: null,
+    tz: null,
+  });
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,19 +69,25 @@ export default function Home() {
       setLoading(true);
       setError(null);
 
-      const [roomsRes, bookingsRes, paymentsRes] = await Promise.all([
-        api.get("/rooms"),
-        api.get("/bookings"),
-        api.get("/payments"),
-      ]);
+      const res = await api.get("/dashboard");
+      const payload = res.data?.data ?? res.data;
 
-      const roomsData = roomsRes.data?.data ?? roomsRes.data;
-      const bookingsData = bookingsRes.data?.data ?? bookingsRes.data;
-      const paymentsData = paymentsRes.data?.data ?? paymentsRes.data;
-
-      setRooms(Array.isArray(roomsData) ? roomsData : []);
-      setBookings(Array.isArray(bookingsData) ? bookingsData : []);
-      setPayments(Array.isArray(paymentsData) ? paymentsData : []);
+      setData({
+        totalRooms: payload?.totalRooms ?? 0,
+        occupancyRate: payload?.occupancyRate ?? 0,
+        activeBookingsCount: payload?.activeBookingsCount ?? 0,
+        totalRevenue: payload?.totalRevenue ?? 0,
+        todaysCheckIns: payload?.todaysCheckIns ?? 0,
+        todaysCheckOuts: payload?.todaysCheckOuts ?? 0,
+        latestBookings: Array.isArray(payload?.latestBookings)
+          ? payload.latestBookings
+          : [],
+        latestPayments: Array.isArray(payload?.latestPayments)
+          ? payload.latestPayments
+          : [],
+        serverNow: payload?.serverNow ?? null,
+        tz: payload?.tz ?? null,
+      });
     } catch (err: any) {
       console.error("Error loading dashboard data", err);
       setError(
@@ -99,58 +103,12 @@ export default function Home() {
     loadData();
   }, []);
 
-  // ✅ No lo “congelamos”: cada render toma el día actual del usuario
-  const today = useMemo(() => new Date(), []);
-
-  // KPIs
-  const totalRooms = rooms.length;
-
-  const activeBookings = bookings.filter((b) =>
-    ["confirmed", "checked_in"].includes(b.status)
-  );
-
-  // ✅ Check-ins / check-outs “de hoy” por rango local (evita bug UTC/Z)
-  // ✅ Y además: sólo cuenta reservas activas (confirmed/checked_in/checked_out)
-  const todaysCheckIns = bookings.filter(
-    (b) =>
-      ["confirmed", "checked_in", "checked_out"].includes(b.status) &&
-      isWithinLocalDay(b.checkIn, today)
-  );
-
-  const todaysCheckOuts = bookings.filter(
-    (b) =>
-      ["confirmed", "checked_in", "checked_out"].includes(b.status) &&
-      isWithinLocalDay(b.checkOut, today)
-  );
-
-  const completedPayments = payments.filter((p) => p.status === "completed");
-  const totalRevenue = completedPayments.reduce((sum, p) => sum + p.amount, 0);
-
-  const occupancyRate =
-    totalRooms > 0 ? Math.round((activeBookings.length / totalRooms) * 100) : 0;
-
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat("en-UY", {
       style: "currency",
       currency: "UYU",
       minimumFractionDigits: 0,
     }).format(value);
-
-  const latestBookings = [...bookings]
-    .sort((a, b) => {
-      const aD = toDate(a.checkIn)?.getTime() ?? 0;
-      const bD = toDate(b.checkIn)?.getTime() ?? 0;
-      return bD - aD;
-    })
-    .slice(0, 5);
-
-  const latestPayments = [...completedPayments]
-    .sort((a, b) => {
-      const aD = toDate(a.createdAt)?.getTime() ?? 0;
-      const bD = toDate(b.createdAt)?.getTime() ?? 0;
-      return bD - aD;
-    })
-    .slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -175,6 +133,12 @@ export default function Home() {
                 Here you can see a quick summary of occupancy, reservations and
                 revenue.
               </p>
+              {(data.serverNow || data.tz) && (
+                <p className="text-xs text-slate-400 mt-2">
+                  Server time: {data.serverNow ?? "-"}{" "}
+                  {data.tz ? `(TZ: ${data.tz})` : ""}
+                </p>
+              )}
             </div>
             <div className="flex gap-2">
               <Badge variant="success">Demo production</Badge>
@@ -187,7 +151,7 @@ export default function Home() {
         <Card>
           <CardBody>
             <p className="text-xs text-slate-500">Total rooms</p>
-            <p className="text-2xl font-semibold mt-1">{totalRooms}</p>
+            <p className="text-2xl font-semibold mt-1">{data.totalRooms}</p>
             <p className="text-xs text-slate-400 mt-1">
               Rooms registered in the system.
             </p>
@@ -197,9 +161,11 @@ export default function Home() {
         <Card>
           <CardBody>
             <p className="text-xs text-slate-500">Current occupancy</p>
-            <p className="text-2xl font-semibold mt-1">{occupancyRate}%</p>
+            <p className="text-2xl font-semibold mt-1">
+              {data.occupancyRate}%
+            </p>
             <p className="text-xs text-slate-400 mt-1">
-              {activeBookings.length} active reservations.
+              {data.activeBookingsCount} active reservations.
             </p>
           </CardBody>
         </Card>
@@ -208,7 +174,7 @@ export default function Home() {
           <CardBody>
             <p className="text-xs text-slate-500">Payment revenue</p>
             <p className="text-2xl font-semibold mt-1">
-              {formatCurrency(totalRevenue)}
+              {formatCurrency(data.totalRevenue)}
             </p>
             <p className="text-xs text-slate-400 mt-1">
               Total completed payments.
@@ -220,8 +186,7 @@ export default function Home() {
           <CardBody>
             <p className="text-xs text-slate-500">Today</p>
             <p className="text-base font-semibold mt-1">
-              Check-in: {todaysCheckIns.length} · Check-out:{" "}
-              {todaysCheckOuts.length}
+              Check-in: {data.todaysCheckIns} · Check-out: {data.todaysCheckOuts}
             </p>
             <p className="text-xs text-slate-400 mt-1">
               Scheduled activity for today.
@@ -239,15 +204,15 @@ export default function Home() {
               </h3>
             </div>
 
-            {latestBookings.length === 0 && (
+            {data.latestBookings.length === 0 && (
               <p className="text-sm text-slate-500">
                 There are no reservations yet.
               </p>
             )}
 
-            {latestBookings.length > 0 && (
+            {data.latestBookings.length > 0 && (
               <div className="space-y-2">
-                {latestBookings.map((b) => (
+                {data.latestBookings.map((b) => (
                   <div
                     key={b.id}
                     className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 bg-white"
@@ -287,15 +252,15 @@ export default function Home() {
               </h3>
             </div>
 
-            {latestPayments.length === 0 && (
+            {data.latestPayments.length === 0 && (
               <p className="text-sm text-slate-500">
                 There are no completed payments yet.
               </p>
             )}
 
-            {latestPayments.length > 0 && (
+            {data.latestPayments.length > 0 && (
               <div className="space-y-2">
-                {latestPayments.map((p) => (
+                {data.latestPayments.map((p) => (
                   <div
                     key={p.id}
                     className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 bg-white"
@@ -331,4 +296,3 @@ export default function Home() {
     </div>
   );
 }
-
