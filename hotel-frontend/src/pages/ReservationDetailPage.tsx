@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import type React from "react";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -102,14 +103,17 @@ export default function ReservationDetailPage() {
   };
 
   const getBookingStatusVariant = (status: string) => {
-    const lower = status.toLowerCase();
-    if (lower === "pending") return "warning";
-    if (lower === "confirmed") return "info";
-    if (lower === "cancelled" || lower === "canceled") return "danger";
-    if (lower === "checked_in") return "success";
-    if (lower === "checked_out") return "secondary";
-    return "secondary";
-  };
+  const lower = status.toLowerCase();
+
+  if (lower === "pending") return "warning";
+  if (lower === "confirmed") return "default";
+  if (lower === "cancelled" || lower === "canceled") return "danger";
+  if (lower === "checked_in") return "success";
+  if (lower === "checked_out") return "default";
+
+  return "default";
+};
+
 
   const getMethodLabel = (method: Payment["method"]) => {
     switch (method) {
@@ -266,7 +270,7 @@ export default function ReservationDetailPage() {
 
     const current = (booking.status || "").toString().toLowerCase() as BookingStatus;
 
-    const buttons: JSX.Element[] = [];
+    const buttons: React.ReactElement[] = [];
 
     if (current === "pending") {
       buttons.push(

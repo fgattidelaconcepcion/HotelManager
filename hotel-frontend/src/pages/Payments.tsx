@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import axios from "axios";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -133,15 +134,21 @@ const loadPayments = async () => {
     const data = response.data?.data ?? response.data;
 
     setPayments(Array.isArray(data) ? data : []);
-  } catch (err) {
-    console.error("Error loading payments", err);
-    setError(
-      err?.response?.data?.error ||
-        "There was an error loading payments. Please try again."
-    );
-  } finally {
-    setLoading(false);
-  }
+  } catch (err: unknown) {
+  console.error("Error loading payments", err);
+
+  const message =
+    axios.isAxiosError(err)
+      ? (err.response?.data as any)?.error || err.message
+      : err instanceof Error
+      ? err.message
+      : "There was an error loading payments. Please try again.";
+
+  setError(message);
+} finally {
+  setLoading(false);
+}
+
 };
 
 

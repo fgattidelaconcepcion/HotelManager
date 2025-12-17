@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
+
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -65,12 +67,17 @@ export default function Reservations() {
       const res = await api.get("/bookings");
       const data = res.data?.data ?? res.data;
       setBookings(Array.isArray(data) ? data : []);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error loading bookings", err);
-      setError(
-        err?.response?.data?.error ||
-          "There was an error loading reservations. Please try again."
-      );
+
+      const message =
+        axios.isAxiosError(err)
+          ? (err.response?.data as any)?.error || err.message
+          : err instanceof Error
+          ? err.message
+          : "There was an error loading reservations. Please try again.";
+
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -121,14 +128,17 @@ export default function Reservations() {
     return status;
   };
 
+  // Must match BadgeVariant: "default" | "success" | "warning" | "danger"
   const getBookingStatusVariant = (status: string) => {
     const lower = status.toLowerCase();
+
     if (lower === "pending") return "warning";
-    if (lower === "confirmed") return "info";
+    if (lower === "confirmed") return "default";
     if (lower === "cancelled" || lower === "canceled") return "danger";
     if (lower === "checked_in") return "success";
-    if (lower === "checked_out") return "secondary";
-    return "secondary";
+    if (lower === "checked_out") return "default";
+
+    return "default";
   };
 
   // Overall totals
@@ -166,7 +176,6 @@ export default function Reservations() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader
         title="Reservations"
         description="View and manage all hotel reservations."
@@ -186,7 +195,6 @@ export default function Reservations() {
         }
       />
 
-      {/* Overall summary */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-3">
@@ -195,9 +203,7 @@ export default function Reservations() {
               <p className="text-lg font-semibold mt-1">{totalBookings}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">
-                Total reservation amount
-              </p>
+              <p className="text-xs text-gray-500">Total reservation amount</p>
               <p className="text-lg font-semibold mt-1">
                 {formatCurrency(totalRevenue)}
               </p>
@@ -207,14 +213,15 @@ export default function Reservations() {
                 Total paid (completed payments)
               </p>
               <p className="text-lg font-semibold mt-1">
-                {loadingPayments ? "Loading..." : formatCurrency(totalPaidAllBookings)}
+                {loadingPayments
+                  ? "Loading..."
+                  : formatCurrency(totalPaidAllBookings)}
               </p>
             </div>
           </div>
         </CardBody>
       </Card>
 
-      {/* Status messages */}
       {error && (
         <Card>
           <CardBody>
@@ -225,7 +232,6 @@ export default function Reservations() {
         </Card>
       )}
 
-      {/* Filters */}
       <Card>
         <CardBody>
           <form className="flex flex-wrap gap-4 items-end">
@@ -278,7 +284,6 @@ export default function Reservations() {
         </CardBody>
       </Card>
 
-      {/* Reservations table */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
@@ -372,7 +377,8 @@ export default function Reservations() {
                           : "-"}
                       </td>
                       <td className="px-4 py-2 align-top">
-                        {formatDate(booking.checkIn)} → {formatDate(booking.checkOut)}
+                        {formatDate(booking.checkIn)} →{" "}
+                        {formatDate(booking.checkOut)}
                       </td>
                       <td className="px-4 py-2 align-top text-right">
                         {formatCurrency(booking.totalPrice ?? 0)}
