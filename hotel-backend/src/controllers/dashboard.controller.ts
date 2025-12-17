@@ -14,13 +14,6 @@ function endOfLocalDay(date = new Date()) {
   return d;
 }
 
-// estados que consideramos "vigentes" (programadas o activas)
-const ACTIVE_OR_SCHEDULED_STATUSES: BookingStatus[] = [
-  "pending",
-  "confirmed",
-  "checked_in",
-];
-
 const ACTIVE_OR_SCHEDULED_OR_FINISHED_TODAY: BookingStatus[] = [
   "pending",
   "confirmed",
@@ -44,7 +37,6 @@ export const getDashboard = async (_req: Request, res: Response) => {
     ] = await Promise.all([
       prisma.room.count(),
 
-      // Ocupación: solo confirmadas o checked_in (ocupadas / por ocupar)
       prisma.booking.count({
         where: { status: { in: ["confirmed", "checked_in"] } },
       }),
@@ -54,7 +46,6 @@ export const getDashboard = async (_req: Request, res: Response) => {
         _sum: { amount: true },
       }),
 
-      // ✅ Check-ins programados para hoy (incluye pending)
       prisma.booking.count({
         where: {
           status: { in: ACTIVE_OR_SCHEDULED_OR_FINISHED_TODAY },
@@ -62,7 +53,6 @@ export const getDashboard = async (_req: Request, res: Response) => {
         },
       }),
 
-      // ✅ Check-outs programados para hoy (incluye pending)
       prisma.booking.count({
         where: {
           status: { in: ACTIVE_OR_SCHEDULED_OR_FINISHED_TODAY },

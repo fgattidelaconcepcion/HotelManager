@@ -4,6 +4,39 @@ import { z } from "zod";
 import { Prisma, BookingStatus } from "@prisma/client";
 
 /* =====================================
+      DATE HELPERS (ANTI-UTC BUG)
+===================================== */
+
+/**
+ * Si llega "YYYY-MM-DD" lo convertimos a Date en UTC al MEDIODÍA (12:00Z)
+ * para evitar que al verlo en -03 quede como el día anterior.
+ */
+function parseDateOnlyToUTCNoon(value: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) throw new Error("Invalid date-only format");
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  return new Date(Date.UTC(y, mo - 1, d, 12, 0, 0, 0));
+}
+
+function parseBookingDate(value: unknown): Date {
+  if (value instanceof Date) return value;
+
+  if (typeof value === "string") {
+    // Date-only (input type="date" del front)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return parseDateOnlyToUTCNoon(value);
+    }
+    // ISO u otros formatos válidos
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  throw new Error("Invalid date");
+}
+
+/* =====================================
       VALIDACIÓN ZOD
 ===================================== */
 
@@ -21,8 +54,10 @@ const baseBookingSchema = z.object({
       z.number().int().positive()
     )
     .optional(),
-  checkIn: z.coerce.date(),
-  checkOut: z.coerce.date(),
+
+  // ✅ IMPORTANTE: NO usar z.coerce.date() directo con "YYYY-MM-DD"
+  checkIn: z.preprocess((v) => parseBookingDate(v), z.date()),
+  checkOut: z.preprocess((v) => parseBookingDate(v), z.date()),
 });
 
 const createBookingSchema = baseBookingSchema;
@@ -51,6 +86,7 @@ async function checkRoomAvailability(
   const where: Prisma.BookingWhereInput = {
     roomId,
     status: { not: "cancelled" },
+    // solapamiento: existing.checkIn < newCheckOut && existing.checkOut > newCheckIn
     checkIn: { lt: checkOut },
     checkOut: { gt: checkIn },
   };
@@ -107,19 +143,20 @@ export const getAllBookings = async (req: Request, res: Response) => {
       where.guestId = Number(guestId);
     }
 
-    const dateFilters: Prisma.BookingWhereInput[] = [];
+    // filtros por rango (si te llegan date-only, también los normalizamos)
+    const and: Prisma.BookingWhereInput[] = [];
 
-    if (from) {
-      const d = new Date(from as string);
-      if (!isNaN(d.getTime())) dateFilters.push({ checkIn: { gte: d } });
+    if (from && typeof from === "string") {
+      const d = parseBookingDate(from);
+      and.push({ checkIn: { gte: d } });
     }
 
-    if (to) {
-      const d = new Date(to as string);
-      if (!isNaN(d.getTime())) dateFilters.push({ checkOut: { lte: d } });
+    if (to && typeof to === "string") {
+      const d = parseBookingDate(to);
+      and.push({ checkOut: { lte: d } });
     }
 
-    if (dateFilters.length) where.AND = dateFilters;
+    if (and.length) where.AND = and;
 
     const bookings = await prisma.booking.findMany({
       where,
@@ -303,12 +340,7 @@ export const updateBooking = async (req: Request, res: Response) => {
       });
     }
 
-    const available = await checkRoomAvailability(
-      roomId,
-      checkIn,
-      checkOut,
-      id
-    );
+    const available = await checkRoomAvailability(roomId, checkIn, checkOut, id);
 
     if (!available) {
       return res.status(409).json({
@@ -322,12 +354,7 @@ export const updateBooking = async (req: Request, res: Response) => {
 
     const updated = await prisma.booking.update({
       where: { id },
-      data: {
-        roomId,
-        checkIn,
-        checkOut,
-        totalPrice,
-      },
+      data: { roomId, checkIn, checkOut, totalPrice },
       include: {
         room: { include: { roomType: true } },
         guest: { select: guestSelect },
