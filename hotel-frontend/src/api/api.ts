@@ -12,9 +12,10 @@ NProgress.configure({
 let activeRequests = 0;
 
 const api = axios.create({
-  baseURL: "/api",
+  baseURL: import.meta.env.VITE_API_URL,
   headers: { "Content-Type": "application/json" },
 });
+
 
 api.interceptors.request.use((config: any) => {
   const token = localStorage.getItem("token");
