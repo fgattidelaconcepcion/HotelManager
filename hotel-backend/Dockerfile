@@ -7,7 +7,8 @@ RUN npm ci
 COPY prisma ./prisma
 COPY . .
 
-RUN npm run build
+RUN npm run migrate && npm run seed && npm run build
+
 
 ENV NODE_ENV=production
 
