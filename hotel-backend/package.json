@@ -4,11 +4,14 @@
   "description": "Backend for the hotel management app",
   "main": "dist/services/server.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/services/server.ts",
+    "dev": "...",
     "build": "prisma generate && tsc",
-   "start": "node dist/services/server.js",
+    "start": "node dist/services/server.js",
     "migrate": "prisma migrate deploy",
     "seed": "prisma db seed"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   },
   "keywords": ["node", "express", "typescript", "hotel", "backend"],
   "author": "Franco Gatti",
