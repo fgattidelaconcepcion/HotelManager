@@ -1,3 +1,4 @@
+import React from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { Toaster } from "sonner";
 
@@ -14,10 +15,32 @@ import Payments from "./pages/Payments";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout/Layout";
+import { AuthProvider } from "./auth/AuthContext";
+
+function Forbidden() {
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center px-6">
+      <div className="max-w-md w-full bg-white border rounded-xl p-6">
+        <h1 className="text-xl font-semibold text-slate-900">Access denied</h1>
+        <p className="text-sm text-slate-600 mt-2">
+          You don’t have permission to access this section.
+        </p>
+        <button
+          className="mt-4 text-sm px-4 py-2 rounded-lg bg-slate-900 text-white"
+          onClick={() => (window.location.href = "/")}
+        >
+          Go to dashboard
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const router = createBrowserRouter([
   { path: "/login", element: <Login /> },
   { path: "/signup", element: <Signup /> },
+  { path: "/forbidden", element: <Forbidden /> },
+
   {
     path: "/",
     element: (
@@ -27,6 +50,7 @@ const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Home /> },
+
       { path: "rooms", element: <Rooms /> },
       { path: "rooms/new", element: <RoomFormPage /> },
       { path: "rooms/:id", element: <RoomFormPage /> },
@@ -39,6 +63,7 @@ const router = createBrowserRouter([
       { path: "reservations/new", element: <ReservationFormPage /> },
       { path: "reservations/:id", element: <ReservationFormPage /> },
 
+      //  Payments both (admin + receptionist)
       { path: "payments", element: <Payments /> },
     ],
   },
@@ -46,9 +71,9 @@ const router = createBrowserRouter([
 
 export default function App() {
   return (
-    <>
+    <AuthProvider>
       <RouterProvider router={router} />
       <Toaster richColors position="top-right" />
-    </>
+    </AuthProvider>
   );
 }

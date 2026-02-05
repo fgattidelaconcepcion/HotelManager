@@ -1,15 +1,10 @@
 import { Request, Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
-import { Prisma, BookingStatus } from "@prisma/client";
-
-/* =====================================
-      DATE HELPERS (ANTI-UTC BUG)
-===================================== */
+import { Prisma, BookingStatus, RoomStatus } from "@prisma/client";
 
 /**
- * Si llega "YYYY-MM-DD" lo convertimos a Date en UTC al MEDIODÍA (12:00Z)
- * para evitar que al verlo en -03 quede como el día anterior.
+ * Parse "YYYY-MM-DD" as UTC noon to avoid timezone shifting issues.
  */
 function parseDateOnlyToUTCNoon(value: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -24,11 +19,7 @@ function parseBookingDate(value: unknown): Date {
   if (value instanceof Date) return value;
 
   if (typeof value === "string") {
-    // Date-only (input type="date" del front)
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return parseDateOnlyToUTCNoon(value);
-    }
-    // ISO u otros formatos válidos
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parseDateOnlyToUTCNoon(value);
     const d = new Date(value);
     if (!isNaN(d.getTime())) return d;
   }
@@ -36,18 +27,20 @@ function parseBookingDate(value: unknown): Date {
   throw new Error("Invalid date");
 }
 
-/* =====================================
-      VALIDACIÓN ZOD
-===================================== */
+/* ============================
+   ZOD VALIDATION
+============================ */
 
 const baseBookingSchema = z.object({
   roomId: z.preprocess((v) => Number(v), z.number().int().positive()),
+
   userId: z
     .preprocess(
       (v) => (v === undefined || v === null || v === "" ? undefined : Number(v)),
       z.number().int().positive()
     )
     .optional(),
+
   guestId: z
     .preprocess(
       (v) => (v === undefined || v === null || v === "" ? undefined : Number(v)),
@@ -55,7 +48,6 @@ const baseBookingSchema = z.object({
     )
     .optional(),
 
-  // ✅ IMPORTANTE: NO usar z.coerce.date() directo con "YYYY-MM-DD"
   checkIn: z.preprocess((v) => parseBookingDate(v), z.date()),
   checkOut: z.preprocess((v) => parseBookingDate(v), z.date()),
 });
@@ -67,17 +59,18 @@ const updateStatusSchema = z.object({
   status: z.nativeEnum(BookingStatus),
 });
 
-/* =====================================
-      HELPERS
-===================================== */
+/* ============================
+   HELPERS
+============================ */
 
 function calculateNights(checkIn: Date, checkOut: Date): number {
   const msPerDay = 1000 * 60 * 60 * 24;
-  const diff = (checkOut.getTime() - checkIn.getTime()) / msPerDay;
-  return Math.max(1, Math.round(diff));
+  const diffDays = (checkOut.getTime() - checkIn.getTime()) / msPerDay;
+  return Math.ceil(diffDays);
 }
 
-async function checkRoomAvailability(
+async function ensureRoomAvailable(
+  tx: Prisma.TransactionClient,
   roomId: number,
   checkIn: Date,
   checkOut: Date,
@@ -86,22 +79,25 @@ async function checkRoomAvailability(
   const where: Prisma.BookingWhereInput = {
     roomId,
     status: { not: "cancelled" },
-    // solapamiento: existing.checkIn < newCheckOut && existing.checkOut > newCheckIn
     checkIn: { lt: checkOut },
     checkOut: { gt: checkIn },
   };
 
-  if (excludeBookingId) {
-    where.id = { not: excludeBookingId };
-  }
+  if (excludeBookingId) where.id = { not: excludeBookingId };
 
-  const overlapping = await prisma.booking.findFirst({ where });
+  const overlapping = await tx.booking.findFirst({ where });
   return !overlapping;
 }
 
-/* =====================================
-      SELECTS SEGUROS (ANTI-500)
-===================================== */
+function getRoomStatusForBookingTransition(next: BookingStatus): RoomStatus | null {
+  if (next === "checked_in") return RoomStatus.ocupado;
+  if (next === "checked_out") return RoomStatus.disponible;
+  return null;
+}
+
+/* ============================
+   SAFE SELECTS
+============================ */
 
 const guestSelect = {
   id: true,
@@ -120,42 +116,26 @@ const userSelect = {
   createdAt: true,
 };
 
-/* =====================================
-      CONTROLADORES
-===================================== */
+/* ============================
+   CONTROLLERS
+============================ */
 
 // GET /api/bookings
 export const getAllBookings = async (req: Request, res: Response) => {
   try {
     const { status, roomId, guestId, from, to } = req.query;
-
     const where: Prisma.BookingWhereInput = {};
 
     if (status && Object.values(BookingStatus).includes(status as BookingStatus)) {
       where.status = status as BookingStatus;
     }
 
-    if (roomId && !isNaN(Number(roomId))) {
-      where.roomId = Number(roomId);
-    }
+    if (roomId && !isNaN(Number(roomId))) where.roomId = Number(roomId);
+    if (guestId && !isNaN(Number(guestId))) where.guestId = Number(guestId);
 
-    if (guestId && !isNaN(Number(guestId))) {
-      where.guestId = Number(guestId);
-    }
-
-    // filtros por rango (si te llegan date-only, también los normalizamos)
     const and: Prisma.BookingWhereInput[] = [];
-
-    if (from && typeof from === "string") {
-      const d = parseBookingDate(from);
-      and.push({ checkIn: { gte: d } });
-    }
-
-    if (to && typeof to === "string") {
-      const d = parseBookingDate(to);
-      and.push({ checkOut: { lte: d } });
-    }
-
+    if (from && typeof from === "string") and.push({ checkIn: { gte: parseBookingDate(from) } });
+    if (to && typeof to === "string") and.push({ checkOut: { lte: parseBookingDate(to) } });
     if (and.length) where.AND = and;
 
     const bookings = await prisma.booking.findMany({
@@ -171,10 +151,7 @@ export const getAllBookings = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, data: bookings });
   } catch (error) {
     console.error("Error en getAllBookings:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al obtener reservas",
-    });
+    return res.status(500).json({ success: false, error: "Error fetching bookings" });
   }
 };
 
@@ -182,9 +159,7 @@ export const getAllBookings = async (req: Request, res: Response) => {
 export const getBookingById = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
-    }
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
 
     const booking = await prisma.booking.findUnique({
       where: { id },
@@ -195,20 +170,12 @@ export const getBookingById = async (req: Request, res: Response) => {
       },
     });
 
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: "Reserva no encontrada",
-      });
-    }
+    if (!booking) return res.status(404).json({ success: false, error: "Booking not found" });
 
     return res.status(200).json({ success: true, data: booking });
   } catch (error) {
     console.error("Error en getBookingById:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al obtener la reserva",
-    });
+    return res.status(500).json({ success: false, error: "Error fetching booking" });
   }
 };
 
@@ -219,7 +186,8 @@ export const createBooking = async (req: Request, res: Response) => {
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        error: "Datos inválidos",
+        code: "VALIDATION_ERROR",
+        error: "Invalid data",
         details: parsed.error.flatten(),
       });
     }
@@ -229,7 +197,8 @@ export const createBooking = async (req: Request, res: Response) => {
     if (data.checkOut <= data.checkIn) {
       return res.status(400).json({
         success: false,
-        error: "Check-out debe ser posterior a check-in",
+        code: "INVALID_DATES",
+        error: "Check-out must be after check-in.",
       });
     }
 
@@ -239,52 +208,67 @@ export const createBooking = async (req: Request, res: Response) => {
     });
 
     if (!room) {
-      return res.status(404).json({
+      return res.status(404).json({ success: false, code: "ROOM_NOT_FOUND", error: "Room not found" });
+    }
+
+    if (room.status === RoomStatus.mantenimiento) {
+      return res.status(400).json({
         success: false,
-        error: "Habitación no encontrada",
+        code: "ROOM_IN_MAINTENANCE",
+        error: "This room is under maintenance and can’t be booked.",
       });
     }
 
-    const available = await checkRoomAvailability(
-      data.roomId,
-      data.checkIn,
-      data.checkOut
-    );
-
-    if (!available) {
-      return res.status(409).json({
+    if (!room.roomType?.basePrice && room.roomType?.basePrice !== 0) {
+      return res.status(400).json({
         success: false,
-        error: "La habitación no está disponible",
+        code: "ROOM_TYPE_MISSING_PRICE",
+        error: "Room type base price is required to create a booking.",
       });
     }
 
-    const nights = calculateNights(data.checkIn, data.checkOut);
-    const totalPrice = nights * room.roomType.basePrice;
+    const booking = await prisma.$transaction(async (tx) => {
+      const available = await ensureRoomAvailable(tx, data.roomId, data.checkIn, data.checkOut);
+      if (!available) {
+        const err: any = new Error("ROOM_NOT_AVAILABLE");
+        err.code = "ROOM_NOT_AVAILABLE";
+        throw err;
+      }
 
-    const booking = await prisma.booking.create({
-      data: {
-        roomId: data.roomId,
-        userId: data.userId,
-        guestId: data.guestId,
-        checkIn: data.checkIn,
-        checkOut: data.checkOut,
-        totalPrice,
-        status: "pending",
-      },
-      include: {
-        room: { include: { roomType: true } },
-        guest: { select: guestSelect },
-        user: { select: userSelect },
-      },
+      const nights = calculateNights(data.checkIn, data.checkOut);
+      const totalPrice = nights * (room.roomType?.basePrice ?? 0);
+
+      return tx.booking.create({
+        data: {
+          roomId: data.roomId,
+          userId: data.userId,
+          guestId: data.guestId,
+          checkIn: data.checkIn,
+          checkOut: data.checkOut,
+          totalPrice,
+          status: "pending",
+        },
+        include: {
+          room: { include: { roomType: true } },
+          guest: { select: guestSelect },
+          user: { select: userSelect },
+        },
+      });
     });
 
     return res.status(201).json({ success: true, data: booking });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error en createBooking:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al crear la reserva",
-    });
+
+    if (error?.code === "ROOM_NOT_AVAILABLE" || error?.message === "ROOM_NOT_AVAILABLE") {
+      return res.status(409).json({
+        success: false,
+        code: "ROOM_NOT_AVAILABLE",
+        error: "Room is not available for the selected dates.",
+      });
+    }
+
+    return res.status(500).json({ success: false, error: "Error creating booking" });
   }
 };
 
@@ -292,15 +276,14 @@ export const createBooking = async (req: Request, res: Response) => {
 export const updateBooking = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
-    }
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
 
     const parsed = updateBookingSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        error: "Datos inválidos",
+        code: "VALIDATION_ERROR",
+        error: "Invalid data",
         details: parsed.error.flatten(),
       });
     }
@@ -310,65 +293,98 @@ export const updateBooking = async (req: Request, res: Response) => {
       include: { room: { include: { roomType: true } } },
     });
 
-    if (!existing) {
-      return res.status(404).json({
+    if (!existing) return res.status(404).json({ success: false, error: "Booking not found" });
+
+    
+    if (["checked_in", "checked_out", "cancelled"].includes(existing.status)) {
+      return res.status(400).json({
         success: false,
-        error: "Reserva no encontrada",
+        code: "BOOKING_LOCKED",
+        error: "This booking can’t be edited in its current status.",
       });
     }
 
-    const roomId = parsed.data.roomId ?? existing.roomId;
-    const checkIn = parsed.data.checkIn ?? existing.checkIn;
-    const checkOut = parsed.data.checkOut ?? existing.checkOut;
+    const nextRoomId = parsed.data.roomId ?? existing.roomId;
+    const nextGuestId = parsed.data.guestId ?? existing.guestId ?? undefined;
+    const nextUserId = parsed.data.userId ?? existing.userId ?? undefined;
+    const nextCheckIn = parsed.data.checkIn ?? existing.checkIn;
+    const nextCheckOut = parsed.data.checkOut ?? existing.checkOut;
 
-    if (checkOut <= checkIn) {
+    if (nextCheckOut <= nextCheckIn) {
       return res.status(400).json({
         success: false,
-        error: "Check-out inválido",
+        code: "INVALID_DATES",
+        error: "Check-out must be after check-in.",
       });
     }
 
     const room = await prisma.room.findUnique({
-      where: { id: roomId },
+      where: { id: nextRoomId },
       include: { roomType: true },
     });
 
     if (!room) {
-      return res.status(404).json({
+      return res.status(404).json({ success: false, code: "ROOM_NOT_FOUND", error: "Room not found" });
+    }
+
+    if (room.status === RoomStatus.mantenimiento) {
+      return res.status(400).json({
         success: false,
-        error: "Habitación no encontrada",
+        code: "ROOM_IN_MAINTENANCE",
+        error: "This room is under maintenance and can’t be booked.",
       });
     }
 
-    const available = await checkRoomAvailability(roomId, checkIn, checkOut, id);
-
-    if (!available) {
-      return res.status(409).json({
+    if (!room.roomType?.basePrice && room.roomType?.basePrice !== 0) {
+      return res.status(400).json({
         success: false,
-        error: "La habitación no está disponible",
+        code: "ROOM_TYPE_MISSING_PRICE",
+        error: "Room type base price is required to update a booking.",
       });
     }
 
-    const nights = calculateNights(checkIn, checkOut);
-    const totalPrice = nights * room.roomType.basePrice;
+    const updated = await prisma.$transaction(async (tx) => {
+      const available = await ensureRoomAvailable(tx, nextRoomId, nextCheckIn, nextCheckOut, id);
+      if (!available) {
+        const err: any = new Error("ROOM_NOT_AVAILABLE");
+        err.code = "ROOM_NOT_AVAILABLE";
+        throw err;
+      }
 
-    const updated = await prisma.booking.update({
-      where: { id },
-      data: { roomId, checkIn, checkOut, totalPrice },
-      include: {
-        room: { include: { roomType: true } },
-        guest: { select: guestSelect },
-        user: { select: userSelect },
-      },
+      const nights = calculateNights(nextCheckIn, nextCheckOut);
+      const totalPrice = nights * (room.roomType?.basePrice ?? 0);
+
+      return tx.booking.update({
+        where: { id },
+        data: {
+          roomId: nextRoomId,
+          guestId: nextGuestId ?? null,
+          userId: nextUserId ?? null,
+          checkIn: nextCheckIn,
+          checkOut: nextCheckOut,
+          totalPrice,
+        },
+        include: {
+          room: { include: { roomType: true } },
+          guest: { select: guestSelect },
+          user: { select: userSelect },
+        },
+      });
     });
 
     return res.status(200).json({ success: true, data: updated });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error en updateBooking:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al actualizar la reserva",
-    });
+
+    if (error?.code === "ROOM_NOT_AVAILABLE" || error?.message === "ROOM_NOT_AVAILABLE") {
+      return res.status(409).json({
+        success: false,
+        code: "ROOM_NOT_AVAILABLE",
+        error: "Room is not available for the selected dates.",
+      });
+    }
+
+    return res.status(500).json({ success: false, error: "Error updating booking" });
   }
 };
 
@@ -376,61 +392,77 @@ export const updateBooking = async (req: Request, res: Response) => {
 export const updateBookingStatus = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
-    }
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
 
     const parsed = updateStatusSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({
-        success: false,
-        error: "Estado inválido",
-      });
+      return res.status(400).json({ success: false, code: "INVALID_STATUS", error: "Invalid status" });
     }
 
-    const booking = await prisma.booking.findUnique({ where: { id } });
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: "Reserva no encontrada",
-      });
-    }
-
-    const current = booking.status;
     const next = parsed.data.status;
 
-    const transitions: Record<BookingStatus, BookingStatus[]> = {
-      pending: ["confirmed", "cancelled"],
-      confirmed: ["checked_in", "cancelled"],
-      checked_in: ["checked_out"],
-      checked_out: [],
-      cancelled: [],
-    };
+    const updated = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id }, include: { room: true } });
+      if (!booking) {
+        const err: any = new Error("BOOKING_NOT_FOUND");
+        err.code = "BOOKING_NOT_FOUND";
+        throw err;
+      }
 
-    if (!transitions[current].includes(next)) {
-      return res.status(400).json({
-        success: false,
-        error: `No se puede pasar de ${current} a ${next}`,
+      const transitions: Record<BookingStatus, BookingStatus[]> = {
+        pending: ["confirmed", "cancelled"],
+        confirmed: ["checked_in", "cancelled"],
+        checked_in: ["checked_out"],
+        checked_out: [],
+        cancelled: [],
+      };
+
+      if (!transitions[booking.status].includes(next)) {
+        const err: any = new Error("INVALID_TRANSITION");
+        err.code = "INVALID_TRANSITION";
+        err.details = { current: booking.status, next };
+        throw err;
+      }
+
+      const bookingUpdated = await tx.booking.update({
+        where: { id },
+        data: { status: next },
+        include: {
+          room: { include: { roomType: true } },
+          guest: { select: guestSelect },
+          user: { select: userSelect },
+        },
       });
-    }
 
-    const updated = await prisma.booking.update({
-      where: { id },
-      data: { status: next },
-      include: {
-        room: { include: { roomType: true } },
-        guest: { select: guestSelect },
-        user: { select: userSelect },
-      },
+      const roomStatus = getRoomStatusForBookingTransition(next);
+      if (roomStatus && booking.roomId) {
+        if (!(roomStatus === RoomStatus.disponible && booking.room?.status === RoomStatus.mantenimiento)) {
+          await tx.room.update({ where: { id: booking.roomId }, data: { status: roomStatus } });
+        }
+      }
+
+      return bookingUpdated;
     });
 
     return res.status(200).json({ success: true, data: updated });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error en updateBookingStatus:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error al actualizar el estado",
-    });
+
+    if (error?.code === "BOOKING_NOT_FOUND" || error?.message === "BOOKING_NOT_FOUND") {
+      return res.status(404).json({ success: false, error: "Booking not found" });
+    }
+
+    if (error?.code === "INVALID_TRANSITION" || error?.message === "INVALID_TRANSITION") {
+      const current = error?.details?.current;
+      const next = error?.details?.next;
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_TRANSITION",
+        error: current && next ? `Cannot transition from ${current} to ${next}` : "Invalid transition",
+      });
+    }
+
+    return res.status(500).json({ success: false, error: "Error updating status" });
   }
 };
 
@@ -438,29 +470,17 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
 export const deleteBooking = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
-    }
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
 
     await prisma.booking.delete({ where: { id } });
-
-    return res.status(200).json({
-      success: true,
-      message: "Reserva eliminada correctamente",
-    });
+    return res.status(200).json({ success: true, message: "Booking deleted successfully" });
   } catch (error: any) {
     console.error("Error en deleteBooking:", error);
 
-    if (error.code === "P2025") {
-      return res.status(404).json({
-        success: false,
-        error: "Reserva no encontrada",
-      });
+    if (error?.code === "P2025") {
+      return res.status(404).json({ success: false, error: "Booking not found" });
     }
 
-    return res.status(500).json({
-      success: false,
-      error: "Error al eliminar la reserva",
-    });
+    return res.status(500).json({ success: false, error: "Error deleting booking" });
   }
 };

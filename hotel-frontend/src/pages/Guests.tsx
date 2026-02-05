@@ -4,6 +4,7 @@ import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import RoleGate from "../auth/RoleGate";
 
 export interface Guest {
   id: number;
@@ -69,13 +70,8 @@ export default function Guests() {
             String(g.id).includes(text));
       }
 
-      if (onlyWithEmail) {
-        ok = ok && !!g.email;
-      }
-
-      if (onlyWithPhone) {
-        ok = ok && !!g.phone;
-      }
+      if (onlyWithEmail) ok = ok && !!g.email;
+      if (onlyWithPhone) ok = ok && !!g.phone;
 
       return ok;
     });
@@ -93,6 +89,17 @@ export default function Guests() {
       return value;
     }
   };
+
+  const lastUpdated = useMemo(() => {
+    const sorted = guests
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt ?? b.createdAt ?? "").getTime() -
+          new Date(a.updatedAt ?? a.createdAt ?? "").getTime()
+      );
+    return sorted[0]?.updatedAt ?? sorted[0]?.createdAt ?? null;
+  }, [guests]);
 
   const handleDelete = async (guest: Guest) => {
     const ok = window.confirm(
@@ -118,7 +125,6 @@ export default function Guests() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader
         title="Guests"
         description="Manage your hotel guests."
@@ -127,7 +133,6 @@ export default function Guests() {
         }
       />
 
-      {/* Summary */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-4">
@@ -146,22 +151,13 @@ export default function Guests() {
             <div>
               <p className="text-xs text-slate-500">Last updated</p>
               <p className="text-sm mt-1 text-slate-600">
-                {formatDate(
-                  guests
-                    .slice()
-                    .sort(
-                      (a, b) =>
-                        new Date(b.updatedAt ?? b.createdAt ?? "").getTime() -
-                        new Date(a.updatedAt ?? a.createdAt ?? "").getTime()
-                    )[0]?.updatedAt
-                )}
+                {formatDate(lastUpdated)}
               </p>
             </div>
           </div>
         </CardBody>
       </Card>
 
-      {/* Filters */}
       <Card>
         <CardBody>
           <form className="flex flex-wrap gap-4 items-end">
@@ -220,7 +216,6 @@ export default function Guests() {
         </CardBody>
       </Card>
 
-      {/* Status messages */}
       {error && (
         <Card>
           <CardBody>
@@ -231,7 +226,6 @@ export default function Guests() {
         </Card>
       )}
 
-      {/* Guests table */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
@@ -261,6 +255,7 @@ export default function Guests() {
                   </th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredGuests.length === 0 && !loading && (
                   <tr>
@@ -292,15 +287,19 @@ export default function Guests() {
                       >
                         View / Edit
                       </Button>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        className="text-xs px-3 py-1"
-                        onClick={() => handleDelete(g)}
-                        disabled={loading}
-                      >
-                        Delete
-                      </Button>
+
+                      {/* ✅ Delete SOLO ADMIN */}
+                      <RoleGate allowed={["admin"]}>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          className="text-xs px-3 py-1"
+                          onClick={() => handleDelete(g)}
+                          disabled={loading}
+                        >
+                          Delete
+                        </Button>
+                      </RoleGate>
                     </td>
                   </tr>
                 ))}

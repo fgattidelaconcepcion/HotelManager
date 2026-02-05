@@ -1,26 +1,61 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { toast } from "sonner";
+import axios from "axios";
+import type { UserRole } from "../auth/AuthContext";
 
 export default function Signup() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  // ✅ Solo para DEV/DEMO (controlado por env)
+  const allowRoleSignup = useMemo(() => {
+    return String(import.meta.env.VITE_ALLOW_ROLE_SIGNUP).toLowerCase() === "true";
+  }, []);
+
+  const [role, setRole] = useState<UserRole>("receptionist");
+
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setError("");
+
+    if (!name.trim() || !email.trim() || !password.trim()) {
+      setError("All fields are required.");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await api.post("/auth/register", { name, email, password });
+      const payload: any = { name, email, password };
+
+      // ✅ Solo enviamos role si está habilitado
+      if (allowRoleSignup) payload.role = role;
+
+      await api.post("/auth/register", payload, { silentErrorToast: true } as any);
+
       toast.success("Account created successfully");
       navigate("/login");
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err)
+        ? ((err.response?.data as any)?.error as string) ||
+          ((err.response?.data as any)?.message as string) ||
+          err.message
+        : err instanceof Error
+        ? err.message
+        : "Could not create account. Please try again.";
+
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -48,6 +83,12 @@ export default function Signup() {
               Fill in your details to register and then sign in.
             </p>
 
+            {error && (
+              <div className="mb-4 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700">
@@ -60,6 +101,7 @@ export default function Signup() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -74,6 +116,8 @@ export default function Signup() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  disabled={loading}
+                  autoComplete="email"
                 />
               </div>
 
@@ -88,8 +132,34 @@ export default function Signup() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  disabled={loading}
+                  autoComplete="new-password"
                 />
+                <p className="text-xs text-slate-400 mt-1">
+                  Minimum 6 characters.
+                </p>
               </div>
+
+              {/* ✅ Role selector (solo dev/demo) */}
+              {allowRoleSignup && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Role (dev/demo)
+                  </label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as UserRole)}
+                    className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                    disabled={loading}
+                  >
+                    <option value="receptionist">Receptionist</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Only enabled when VITE_ALLOW_ROLE_SIGNUP=true.
+                  </p>
+                </div>
+              )}
 
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Creating account..." : "Sign up"}
@@ -102,6 +172,7 @@ export default function Signup() {
                 type="button"
                 className="text-blue-600 hover:underline"
                 onClick={() => navigate("/login")}
+                disabled={loading}
               >
                 Sign in
               </button>

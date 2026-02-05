@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { toast } from "sonner";
+import RoleGate from "../auth/RoleGate";
+import { useAuth } from "../auth/AuthContext";
 
 interface RoomType {
   id: number;
@@ -12,9 +14,12 @@ interface RoomType {
   basePrice?: number | null;
 }
 
+type RoomStatus = "disponible" | "ocupado" | "mantenimiento";
+
 interface RoomFormState {
   number: string;
   floor: string;
+  status: RoomStatus;
   description: string;
   roomTypeId: string;
 }
@@ -22,6 +27,7 @@ interface RoomFormState {
 const emptyForm: RoomFormState = {
   number: "",
   floor: "",
+  status: "disponible",
   description: "",
   roomTypeId: "",
 };
@@ -31,17 +37,33 @@ export default function RoomFormPage() {
   const navigate = useNavigate();
   const isEdit = !!id;
 
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const [form, setForm] = useState<RoomFormState>(emptyForm);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingRoom, setLoadingRoom] = useState(false);
   const [loadingRoomTypes, setLoadingRoomTypes] = useState(false);
 
-  const handleChange = (field: keyof RoomFormState, value: string) => {
+  const handleChange = (field: keyof RoomFormState, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const currency = useMemo(
+    () =>
+      new Intl.NumberFormat("en-UY", {
+        style: "currency",
+        currency: "UYU",
+        minimumFractionDigits: 0,
+      }),
+    []
+  );
+
   const loadRoomTypes = async () => {
+    
+    if (!isAdmin) return;
+
     try {
       setLoadingRoomTypes(true);
       const res = await api.get("/room-types");
@@ -68,9 +90,16 @@ export default function RoomFormPage() {
       const res = await api.get(`/rooms/${roomId}`);
       const data = res.data?.data ?? res.data;
 
+      const statusFromApi = (data.status ?? "disponible") as RoomStatus;
+      const safeStatus: RoomStatus =
+        statusFromApi === "ocupado" || statusFromApi === "mantenimiento"
+          ? statusFromApi
+          : "disponible";
+
       setForm({
         number: data.number ?? "",
         floor: data.floor != null ? String(data.floor) : "",
+        status: safeStatus,
         description: data.description ?? "",
         roomTypeId: data.roomType?.id != null ? String(data.roomType.id) : "",
       });
@@ -83,14 +112,12 @@ export default function RoomFormPage() {
 
   useEffect(() => {
     loadRoomTypes();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   useEffect(() => {
-    if (isEdit) {
-      loadRoom();
-    } else {
-      setForm(emptyForm);
-    }
+    if (isEdit) loadRoom();
+    else setForm(emptyForm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -111,6 +138,17 @@ export default function RoomFormPage() {
       return false;
     }
 
+    if (!form.status) {
+      toast.error("Status is required");
+      return false;
+    }
+
+    // roomTypeId only admin
+    if (form.roomTypeId && !isAdmin) {
+      toast.error("Only admin can change the room type.");
+      return false;
+    }
+
     return true;
   };
 
@@ -121,10 +159,13 @@ export default function RoomFormPage() {
     const payload: any = {
       number: form.number.trim(),
       floor: Number(form.floor),
+      status: form.status,
     };
 
     if (form.description.trim()) payload.description = form.description.trim();
-    if (form.roomTypeId) payload.roomTypeId = Number(form.roomTypeId);
+
+    //  only admin can send roomTypeId
+    if (isAdmin && form.roomTypeId) payload.roomTypeId = Number(form.roomTypeId);
 
     try {
       setLoading(true);
@@ -138,16 +179,15 @@ export default function RoomFormPage() {
       }
 
       navigate("/rooms");
-    } catch {
-      toast.error("Could not save the room. Please try again.");
+    } catch (err: any) {
+      const apiMessage = err?.response?.data?.error;
+      toast.error(apiMessage || "Could not save the room. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCancel = () => {
-    navigate("/rooms");
-  };
+  const handleCancel = () => navigate("/rooms");
 
   return (
     <div className="space-y-6">
@@ -207,35 +247,55 @@ export default function RoomFormPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Room type
+                  Status *
                 </label>
                 <select
-                  value={form.roomTypeId}
+                  value={form.status}
                   onChange={(e) =>
-                    handleChange("roomTypeId", e.target.value)
+                    handleChange("status", e.target.value as RoomStatus)
                   }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  disabled={loading || loadingRoomTypes}
+                  disabled={loading}
                 >
-                  <option value="">
-                    {loadingRoomTypes
-                      ? "Loading room types..."
-                      : "Select a type (optional)"}
-                  </option>
-                  {roomTypes.map((rt) => (
-                    <option key={rt.id} value={rt.id}>
-                      {rt.name}
-                      {rt.basePrice != null
-                        ? ` · ${new Intl.NumberFormat("en-UY", {
-                            style: "currency",
-                            currency: "UYU",
-                            minimumFractionDigits: 0,
-                          }).format(rt.basePrice)}`
-                        : ""}
-                    </option>
-                  ))}
+                  <option value="disponible">Available</option>
+                  <option value="ocupado">Occupied</option>
+                  <option value="mantenimiento">Maintenance</option>
                 </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  Tip: use “Maintenance” to hide the room from booking availability.
+                </p>
               </div>
+
+              {/*  Room Type only ADMIN */}
+              <RoleGate allowed={["admin"]}>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Room type
+                  </label>
+                  <select
+                    value={form.roomTypeId}
+                    onChange={(e) => handleChange("roomTypeId", e.target.value)}
+                    className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                    disabled={loading || loadingRoomTypes}
+                  >
+                    <option value="">
+                      {loadingRoomTypes
+                        ? "Loading room types..."
+                        : "Select a type (optional)"}
+                    </option>
+                    {roomTypes.map((rt) => (
+                      <option key={rt.id} value={rt.id}>
+                        {rt.name}
+                        {rt.basePrice != null ? ` · ${currency.format(rt.basePrice)}` : ""}
+                      </option>
+                    ))}
+                  </select>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    Admin only: affects pricing and reporting.
+                  </p>
+                </div>
+              </RoleGate>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
@@ -243,9 +303,7 @@ export default function RoomFormPage() {
                 </label>
                 <textarea
                   value={form.description}
-                  onChange={(e) =>
-                    handleChange("description", e.target.value)
-                  }
+                  onChange={(e) => handleChange("description", e.target.value)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   rows={3}
                   placeholder="e.g. Double room with ocean view..."

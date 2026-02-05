@@ -1,5 +1,5 @@
-// src/routes/index.ts
 import { Router } from "express";
+
 import authController from "../controllers/auth.controller";
 import userController from "../controllers/userController";
 import { authMiddleware } from "../middlewares/authMiddleware";
@@ -12,21 +12,26 @@ import guestRoutes from "./guest.routes";
 
 const router = Router();
 
-/* 
-      RUTAS PÚBLICAS
-*/
+/* =========================
+   Public routes
+========================= */
 router.post("/auth/register", authController.register);
 router.post("/auth/login", authController.login);
 
-/* 
-      PERFIL DE USUARIO
-*/
-router.get("/auth/me", authMiddleware, userController.getProfile);
+/* =========================
+   Protected routes
+   (everything below requires JWT)
+========================= */
+router.use(authMiddleware);
 
-/* 
-      RUTAS PRIVADAS
-*/
+/**
+ * Auth / profile
+ */
+router.get("/auth/me", userController.getProfile);
 
+/**
+ * Domain routes
+ */
 router.use("/rooms", roomsRoutes);
 router.use("/bookings", bookingsRoutes);
 router.use("/room-types", roomTypeRoutes);

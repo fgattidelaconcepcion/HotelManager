@@ -1,18 +1,56 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import React, { useMemo } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../../auth/AuthContext";
 
-const navItems = [
-  { to: "/", label: "Dashboard", exact: true },
-  { to: "/rooms", label: "Rooms" },
-  { to: "/guests", label: "Guests" },
-  { to: "/reservations", label: "Reservations" },
-  { to: "/payments", label: "Payments" },
-];
+type NavItem = {
+  to: string;
+  label: string;
+  exact?: boolean;
+  roles?: Array<"admin" | "receptionist">; 
+};
+
+function roleLabel(role: string | undefined) {
+  if (role === "admin") return "Admin";
+  if (role === "receptionist") return "Receptionist";
+  return "User";
+}
 
 export default function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user, logout } = useAuth();
+
+  const navItems: NavItem[] = useMemo(
+    () => [
+      { to: "/", label: "Dashboard", exact: true, roles: ["admin", "receptionist"] },
+      { to: "/rooms", label: "Rooms", roles: ["admin", "receptionist"] },
+      { to: "/guests", label: "Guests", roles: ["admin", "receptionist"] },
+      { to: "/reservations", label: "Reservations", roles: ["admin", "receptionist"] },
+
+  
+      { to: "/payments", label: "Payments", roles: ["admin", "receptionist"] },
+    ],
+    []
+  );
+
+  const visibleItems = useMemo(() => {
+    const role = user?.role;
+    return navItems.filter((item) => {
+      if (!item.roles || item.roles.length === 0) return true;
+      if (!role) return false;
+      return item.roles.includes(role);
+    });
+  }, [navItems, user?.role]);
+
+  const currentSection = useMemo(() => {
+    const path = location.pathname;
+    if (path === "/" || path === "") return "Dashboard";
+    const match = navItems.find((i) => i.to !== "/" && path.startsWith(i.to));
+    return match?.label ?? "Dashboard";
+  }, [location.pathname, navItems]);
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    logout();
     navigate("/login", { replace: true });
   };
 
@@ -33,7 +71,7 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {navItems.map((item) => (
+          {visibleItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -52,15 +90,21 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* Footer sidebar: info + logout */}
-        <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-2 text-xs text-slate-400">
-          <div>
+        {/* Footer sidebar: user + logout */}
+        <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-3 text-xs text-slate-400">
+          <div className="min-w-0">
             <p>Signed in</p>
-            <p className="font-medium text-slate-200">User</p>
+            <p className="font-medium text-slate-200 truncate">
+              {user?.name ?? "User"}
+            </p>
+            <p className="text-[11px] text-slate-400 truncate">
+              {user?.email ?? "-"} · {roleLabel(user?.role)}
+            </p>
           </div>
+
           <button
             onClick={handleLogout}
-            className="text-xs px-3 py-1 rounded-md border border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white transition"
+            className="text-xs px-3 py-1 rounded-md border border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white transition shrink-0"
           >
             Log out
           </button>
@@ -73,9 +117,12 @@ export default function Layout() {
         <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6">
           <div className="text-sm text-slate-500">
             HotelManager /{" "}
-            <span className="font-medium text-slate-700">Dashboard</span>
+            <span className="font-medium text-slate-700">{currentSection}</span>
           </div>
-          {/* user menu later */}
+
+          <div className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-700 border">
+            {roleLabel(user?.role)}
+          </div>
         </header>
 
         <main className="flex-1 p-6">

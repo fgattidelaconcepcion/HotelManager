@@ -6,14 +6,40 @@ import {
   updateGuest,
   deleteGuest,
 } from "../controllers/guest.controller";
+import { authorizeRoles } from "../middlewares/authorizeRoles";
+import { validateIdParam } from "../middlewares/validateIdParam";
 
 const router = Router();
 
-router.get("/", getAllGuests);
-router.get("/:id", getGuestById);
+/**
+ * READ: admin + receptionist
+ */
+router.get("/", authorizeRoles("admin", "receptionist"), getAllGuests);
 
-router.post("/", createGuest);
-router.put("/:id", updateGuest);
-router.delete("/:id", deleteGuest);
+router.get(
+  "/:id",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  getGuestById
+);
+
+/**
+ * WRITE: admin only
+ */
+router.post("/", authorizeRoles("admin"), createGuest);
+
+router.put(
+  "/:id",
+  authorizeRoles("admin"),
+  validateIdParam("id"),
+  updateGuest
+);
+
+router.delete(
+  "/:id",
+  authorizeRoles("admin"),
+  validateIdParam("id"),
+  deleteGuest
+);
 
 export default router;

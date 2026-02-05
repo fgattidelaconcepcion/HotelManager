@@ -5,6 +5,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { toast } from "sonner";
+import axios from "axios";
 
 interface GuestFormState {
   name: string;
@@ -22,59 +23,64 @@ const emptyForm: GuestFormState = {
   address: "",
 };
 
+function mapApiError(err: unknown) {
+  if (axios.isAxiosError(err)) {
+    return (
+      (err.response?.data as any)?.error ||
+      (err.response?.data as any)?.message ||
+      err.message ||
+      "Request failed. Please try again."
+    );
+  }
+  if (err instanceof Error) return err.message;
+  return "Something went wrong. Please try again.";
+}
+
 export default function GuestFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-
   const isEdit = !!id;
 
   const [form, setForm] = useState<GuestFormState>(emptyForm);
   const [loading, setLoading] = useState(false);
   const [loadingGuest, setLoadingGuest] = useState(false);
 
-  // Usalo SOLO para validaciones del formulario (no para errores del backend)
+  // Inline error: SOLO validaciones / errores de carga
   const [error, setError] = useState<string | null>(null);
 
   const handleChange = (field: keyof GuestFormState, value: string) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-const loadGuest = async () => {
-  if (!id) return;
+  const loadGuest = async () => {
+    if (!id) return;
 
-  const guestId = Number(id);
-  if (Number.isNaN(guestId)) {
-    setError("Invalid guest ID.");
-    return;
-  }
+    const guestId = Number(id);
+    if (Number.isNaN(guestId) || guestId <= 0) {
+      setError("Invalid guest ID.");
+      return;
+    }
 
-  try {
-    setLoadingGuest(true);
-    setError(null);
+    try {
+      setLoadingGuest(true);
+      setError(null);
 
-    const res = await api.get(`/guests/${guestId}`);
-    const guest = res.data?.guest ?? res.data?.data ?? res.data;
+      const res = await api.get(`/guests/${guestId}`);
+      const guest = res.data?.guest ?? res.data?.data ?? res.data;
 
-    setForm({
-      name: guest?.name ?? "",
-      email: guest?.email ?? "",
-      phone: guest?.phone ?? "",
-      documentNumber: guest?.documentNumber ?? "",
-      address: guest?.address ?? "",
-    });
-  } catch (err: any) {
-    setError(
-      err?.response?.data?.error ||
-        "Could not load guest. Please try again."
-    );
-  } finally {
-    setLoadingGuest(false);
-  }
-};
-
+      setForm({
+        name: guest?.name ?? "",
+        email: guest?.email ?? "",
+        phone: guest?.phone ?? "",
+        documentNumber: guest?.documentNumber ?? "",
+        address: guest?.address ?? "",
+      });
+    } catch (err) {
+      setError(mapApiError(err));
+    } finally {
+      setLoadingGuest(false);
+    }
+  };
 
   useEffect(() => {
     if (isEdit) {
@@ -87,12 +93,15 @@ const loadGuest = async () => {
   }, [id]);
 
   const validateForm = () => {
-    if (!form.name.trim()) {
+    const name = form.name.trim();
+    const email = form.email.trim();
+
+    if (!name) {
       setError("Name is required.");
       return false;
     }
 
-    if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim())) {
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) {
       setError("Email format is not valid.");
       return false;
     }
@@ -104,12 +113,19 @@ const loadGuest = async () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      toast.warning(error ?? "Please review the form.");
+      return;
+    }
 
-    const payload: any = { name: form.name.trim() };
+    const payload: any = {
+      name: form.name.trim(),
+    };
+
     if (form.email.trim()) payload.email = form.email.trim();
     if (form.phone.trim()) payload.phone = form.phone.trim();
-    if (form.documentNumber.trim()) payload.documentNumber = form.documentNumber.trim();
+    if (form.documentNumber.trim())
+      payload.documentNumber = form.documentNumber.trim();
     if (form.address.trim()) payload.address = form.address.trim();
 
     try {
@@ -126,16 +142,16 @@ const loadGuest = async () => {
 
       navigate("/guests");
     } catch (err) {
-      // interceptor global -> toast.error(...)
-      // acá no hace falta setError, salvo que quieras inline
+      const message = mapApiError(err);
+      toast.error(message);
+      // opcional: mostrar inline también
+      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCancel = () => {
-    navigate("/guests");
-  };
+  const handleCancel = () => navigate("/guests");
 
   return (
     <div className="space-y-6">
@@ -198,6 +214,7 @@ const loadGuest = async () => {
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="e.g., john@example.com"
                   disabled={loading}
+                  autoComplete="email"
                 />
               </div>
 
@@ -212,6 +229,7 @@ const loadGuest = async () => {
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="e.g., +598 99 123 456"
                   disabled={loading}
+                  autoComplete="tel"
                 />
               </div>
 
@@ -222,7 +240,9 @@ const loadGuest = async () => {
                 <input
                   type="text"
                   value={form.documentNumber}
-                  onChange={(e) => handleChange("documentNumber", e.target.value)}
+                  onChange={(e) =>
+                    handleChange("documentNumber", e.target.value)
+                  }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="e.g., ID 4.123.456-7"
                   disabled={loading}
@@ -240,6 +260,7 @@ const loadGuest = async () => {
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="e.g., Evergreen Ave 1234"
                   disabled={loading}
+                  autoComplete="street-address"
                 />
               </div>
 

@@ -3,10 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
-
 
 /**
  * ============================
@@ -28,18 +27,28 @@ enum BookingStatus {
 }
 
 /**
+ * ✅ NUEVO: Estado de Habitación tipado (producto real)
+ * Mantengo valores en español para no romper el front hoy.
+ */
+enum RoomStatus {
+  disponible
+  ocupado
+  mantenimiento
+}
+
+/**
  * ============================
  * MODELO USER
  * ============================
  */
 
 model User {
-  id        Int       @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   name      String
-  email     String    @unique
+  email     String   @unique
   password  String
-  role      UserRole  @default(receptionist)
-  createdAt DateTime  @default(now())
+  role      UserRole @default(receptionist)
+  createdAt DateTime @default(now())
 
   bookings Booking[]
 }
@@ -59,7 +68,6 @@ model RoomType {
   rooms Room[]
 }
 
-
 /**
  * ============================
  * MODELO ROOM
@@ -67,10 +75,10 @@ model RoomType {
  */
 
 model Room {
-  id          Int     @id @default(autoincrement())
-  number      String  @unique
+  id          Int        @id @default(autoincrement())
+  number      String     @unique
   floor       Int
-  status      String  @default("disponible")
+  status      RoomStatus @default(disponible)
   description String?
   roomTypeId  Int
 
@@ -98,8 +106,6 @@ model Guest {
 
   bookings Booking[]
 }
-
-
 
 /**
  * ============================

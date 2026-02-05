@@ -6,22 +6,39 @@ import {
   updatePayment,
   deletePayment,
 } from "../controllers/payments.controller";
+import { authorizeRoles } from "../middlewares/authorizeRoles";
+import { validateIdParam } from "../middlewares/validateIdParam";
 
 const router = Router();
 
-// Lista de pagos (opcionalmente filtrados por bookingId o status)
-router.get("/", getAllPayments);
+/**
+ * Payments
+ * - receptionist: view/create/update
+ * - admin: everything (including delete)
+ */
+router.get("/", authorizeRoles("admin", "receptionist"), getAllPayments);
 
-// Un pago por ID
-router.get("/:id", getPaymentById);
+router.get(
+  "/:id",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  getPaymentById
+);
 
-// Crear pago
-router.post("/", createPayment);
+router.post("/", authorizeRoles("admin", "receptionist"), createPayment);
 
-// Actualizar pago
-router.put("/:id", updatePayment);
+router.put(
+  "/:id",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  updatePayment
+);
 
-// Eliminar pago
-router.delete("/:id", deletePayment);
+router.delete(
+  "/:id",
+  authorizeRoles("admin"),
+  validateIdParam("id"),
+  deletePayment
+);
 
 export default router;

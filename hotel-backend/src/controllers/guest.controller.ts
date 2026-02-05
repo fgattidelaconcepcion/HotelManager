@@ -3,21 +3,31 @@ import prisma from "../services/prisma";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 
-// Helper: string opcional que convierte "" -> null
+/**
+ * Here I use a helper schema to accept optional text fields and convert "" into null,
+ * so my database stays consistent (I prefer null over empty strings).
+ */
 const nullableText = z.string().optional().or(z.literal("").transform(() => null));
 
-// Validación con Zod
+/**
+ * Here I validate guest creation with Zod.
+ * I keep name required and allow the rest to be optional (nullable) fields.
+ */
 const guestSchema = z.object({
-  name: z.string().min(1, "El nombre es obligatorio"),
-  email: z.string().email("Email inválido").optional().or(z.literal("").transform(() => null)),
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email").optional().or(z.literal("").transform(() => null)),
   phone: nullableText,
   documentNumber: nullableText,
   address: nullableText,
 });
 
+// Here I reuse the same schema for updates but make everything optional
 const updateGuestSchema = guestSchema.partial();
 
-// Helper para búsqueda en campos nullable: AND [not null, contains]
+/**
+ * Here I build a safe "contains" filter for nullable fields:
+ * I ensure the field is not null before applying contains() to avoid unexpected issues.
+ */
 const nullableContains = (
   field: "email" | "phone" | "documentNumber" | "address",
   q: string
@@ -29,10 +39,11 @@ const nullableContains = (
 });
 
 /* ============================================================
-      GET /api/guests   (lista + búsqueda)
+   GET /api/guests (list + search)
    ============================================================ */
 export const getAllGuests = async (req: Request, res: Response) => {
   try {
+    // Here I optionally apply a search filter across multiple fields
     const searchRaw = req.query.search;
     const where: Prisma.GuestWhereInput = {};
 
@@ -49,8 +60,10 @@ export const getAllGuests = async (req: Request, res: Response) => {
       }
     }
 
-    // ✅ Importante: selecciono campos explícitos.
-    // Esto evita que Prisma intente leer columnas que quizá no existen aún en la DB prod.
+    /**
+     * Here I explicitly select fields to avoid Prisma reading columns that may not exist yet
+     * in a production database (this helps prevent P2022 issues).
+     */
     const guests = await prisma.guest.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -59,9 +72,6 @@ export const getAllGuests = async (req: Request, res: Response) => {
         name: true,
         email: true,
         phone: true,
-        // Si tu DB ya tiene estas columnas, las devolvemos.
-        // Si NO las tiene todavía y te sigue tirando P2022, comentá estas 2 líneas temporalmente
-        // y aplicá la migración/alter en la DB.
         documentNumber: true,
         address: true,
         createdAt: true,
@@ -71,22 +81,23 @@ export const getAllGuests = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: guests });
   } catch (error) {
-    console.error("Error en getAllGuests:", error);
-    return res.status(500).json({ success: false, error: "Error al obtener huéspedes" });
+    console.error("Error in getAllGuests:", error);
+    return res.status(500).json({ success: false, error: "Error fetching guests" });
   }
 };
 
 /* ============================================================
-      GET /api/guests/:id
+   GET /api/guests/:id
    ============================================================ */
 export const getGuestById = async (req: Request, res: Response) => {
   try {
+    // Here I validate and parse the ID param
     const id = Number(req.params.id);
-
     if (Number.isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
+      return res.status(400).json({ success: false, error: "Invalid ID" });
     }
 
+    // Here I fetch a guest safely using explicit select
     const guest = await prisma.guest.findUnique({
       where: { id },
       select: {
@@ -102,71 +113,72 @@ export const getGuestById = async (req: Request, res: Response) => {
     });
 
     if (!guest) {
-      return res.status(404).json({ success: false, error: "Huésped no encontrado" });
+      return res.status(404).json({ success: false, error: "Guest not found" });
     }
 
     return res.json({ success: true, data: guest });
   } catch (error) {
-    console.error("Error en getGuestById:", error);
-    return res.status(500).json({ success: false, error: "Error al obtener huésped" });
+    console.error("Error in getGuestById:", error);
+    return res.status(500).json({ success: false, error: "Error fetching guest" });
   }
 };
 
 /* ============================================================
-      POST /api/guests (Crear)
+   POST /api/guests (create)
    ============================================================ */
 export const createGuest = async (req: Request, res: Response) => {
   try {
+    // Here I validate input before creating the guest
     const parsed = guestSchema.safeParse(req.body);
-
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        error: "Datos inválidos",
+        error: "Invalid data",
         details: parsed.error.flatten().fieldErrors,
       });
     }
 
+    // Here I create the guest with the validated payload
     const newGuest = await prisma.guest.create({ data: parsed.data });
 
     return res.status(201).json({ success: true, data: newGuest });
   } catch (error: any) {
-    console.error("Error en createGuest:", error);
+    console.error("Error in createGuest:", error);
 
+    // Here I handle unique constraint violations (e.g. email already exists)
     if (error?.code === "P2002") {
       return res.status(400).json({
         success: false,
-        error: "Ya existe un huésped con ese email.",
+        error: "A guest with this email already exists.",
       });
     }
 
-    return res.status(500).json({
-      success: false,
-      error: "Error al crear huésped",
-    });
+    return res.status(500).json({ success: false, error: "Error creating guest" });
   }
 };
 
 /* ============================================================
-      PUT /api/guests/:id   (Actualizar)
+   PUT /api/guests/:id (update)
    ============================================================ */
 export const updateGuest = async (req: Request, res: Response) => {
   try {
+    // Here I validate and parse the ID param
     const id = Number(req.params.id);
-
     if (Number.isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
+      return res.status(400).json({ success: false, error: "Invalid ID" });
     }
 
+    // Here I validate the update payload (partial schema)
     const parsed = updateGuestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         success: false,
-        error: "Datos inválidos",
+        error: "Invalid data",
         details: parsed.error.flatten().fieldErrors,
       });
     }
 
+    // Here I update the guest with the validated fields only
     const updated = await prisma.guest.update({
       where: { id },
       data: parsed.data,
@@ -174,44 +186,48 @@ export const updateGuest = async (req: Request, res: Response) => {
 
     return res.json({ success: true, data: updated });
   } catch (error: any) {
-    console.error("Error en updateGuest:", error);
+    console.error("Error in updateGuest:", error);
 
+    // Here I handle "not found" updates
     if (error?.code === "P2025") {
-      return res.status(404).json({ success: false, error: "Huésped no encontrado" });
+      return res.status(404).json({ success: false, error: "Guest not found" });
     }
 
+    // Here I handle unique constraint violations (email already exists)
     if (error?.code === "P2002") {
       return res.status(400).json({
         success: false,
-        error: "Ya existe un huésped con ese email.",
+        error: "A guest with this email already exists.",
       });
     }
 
-    return res.status(500).json({ success: false, error: "Error al actualizar huésped" });
+    return res.status(500).json({ success: false, error: "Error updating guest" });
   }
 };
 
 /* ============================================================
-      DELETE /api/guests/:id
+   DELETE /api/guests/:id
    ============================================================ */
 export const deleteGuest = async (req: Request, res: Response) => {
   try {
+    // Here I validate and parse the ID param
     const id = Number(req.params.id);
-
     if (Number.isNaN(id)) {
-      return res.status(400).json({ success: false, error: "ID inválido" });
+      return res.status(400).json({ success: false, error: "Invalid ID" });
     }
 
+    // Here I delete the guest by ID
     await prisma.guest.delete({ where: { id } });
 
-    return res.json({ success: true, message: "Huésped eliminado correctamente" });
+    return res.json({ success: true, message: "Guest deleted successfully" });
   } catch (error: any) {
-    console.error("Error en deleteGuest:", error);
+    console.error("Error in deleteGuest:", error);
 
+    // Here I handle "not found" deletes
     if (error?.code === "P2025") {
-      return res.status(404).json({ success: false, error: "Huésped no encontrado" });
+      return res.status(404).json({ success: false, error: "Guest not found" });
     }
 
-    return res.status(500).json({ success: false, error: "Error al eliminar huésped" });
+    return res.status(500).json({ success: false, error: "Error deleting guest" });
   }
 };

@@ -5,7 +5,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { toast } from "sonner";
-
+import axios from "axios";
 
 /* === Basic types === */
 
@@ -46,8 +46,8 @@ interface Booking {
 interface BookingFormState {
   guestId: string;
   roomId: string;
-  checkIn: string;
-  checkOut: string;
+  checkIn: string;  // YYYY-MM-DD
+  checkOut: string; // YYYY-MM-DD
 }
 
 const emptyForm: BookingFormState = {
@@ -56,6 +56,48 @@ const emptyForm: BookingFormState = {
   checkIn: "",
   checkOut: "",
 };
+
+function mapApiError(err: unknown) {
+  if (axios.isAxiosError(err)) {
+    return (
+      (err.response?.data as any)?.error ||
+      (err.response?.data as any)?.message ||
+      err.message ||
+      "Request failed. Please try again."
+    );
+  }
+  if (err instanceof Error) return err.message;
+  return "Something went wrong. Please try again.";
+}
+
+function toISODate(value: string) {
+  
+  return value?.slice(0, 10);
+}
+
+function parseAsLocalDate(dateStr: string) {
+  
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function diffNights(checkIn: string, checkOut: string): number | null {
+  const ci = parseAsLocalDate(checkIn);
+  const co = parseAsLocalDate(checkOut);
+  if (!ci || !co) return null;
+
+  const diffMs = co.getTime() - ci.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+  if (diffDays <= 0) return null;
+
+  
+  return Math.round(diffDays);
+}
 
 export default function ReservationFormPage() {
   const { id } = useParams();
@@ -100,17 +142,7 @@ export default function ReservationFormPage() {
     }).format(value);
   };
 
-  const calculateNights = (checkIn: string, checkOut: string): number | null => {
-    if (!checkIn || !checkOut) return null;
-    const ci = new Date(checkIn);
-    const co = new Date(checkOut);
-    if (Number.isNaN(ci.getTime()) || Number.isNaN(co.getTime())) return null;
-    const diffDays = (co.getTime() - ci.getTime()) / (1000 * 60 * 60 * 24);
-    if (diffDays <= 0) return null;
-    return Math.round(diffDays) || 1;
-  };
-
-  /* === Derived data: selected booking / room / guest / estimates === */
+  /* === Derived data === */
 
   const selectedGuest = useMemo(() => {
     if (!form.guestId) return null;
@@ -127,13 +159,14 @@ export default function ReservationFormPage() {
   }, [form.roomId, rooms]);
 
   const nights = useMemo(
-    () => calculateNights(form.checkIn, form.checkOut),
+    () => diffNights(form.checkIn, form.checkOut),
     [form.checkIn, form.checkOut]
   );
 
   const suggestedTotal = useMemo(() => {
-    if (!selectedRoom || !selectedRoom.roomType?.basePrice || !nights) return null;
-    return selectedRoom.roomType.basePrice * nights;
+    const base = selectedRoom?.roomType?.basePrice ?? null;
+    if (!base || !nights) return null;
+    return base * nights;
   }, [selectedRoom, nights]);
 
   /* === Data loading === */
@@ -167,7 +200,8 @@ export default function ReservationFormPage() {
   const loadBooking = async () => {
     if (!id) return;
     const bookingId = Number(id);
-    if (Number.isNaN(bookingId)) {
+
+    if (Number.isNaN(bookingId) || bookingId <= 0) {
       setError("Invalid booking ID.");
       return;
     }
@@ -175,21 +209,18 @@ export default function ReservationFormPage() {
     try {
       setLoadingBooking(true);
       setError(null);
+
       const res = await api.get(`/bookings/${bookingId}`);
       const data: Booking = res.data?.data ?? res.data;
 
       setForm({
         guestId: data.guestId != null ? String(data.guestId) : "",
         roomId: data.roomId != null ? String(data.roomId) : "",
-        checkIn: data.checkIn.slice(0, 10), // YYYY-MM-DD
-        checkOut: data.checkOut.slice(0, 10),
+        checkIn: toISODate(data.checkIn) || "",
+        checkOut: toISODate(data.checkOut) || "",
       });
-    } catch (err: any) {
-      console.error("Error loading booking", err);
-      setError(
-        err?.response?.data?.error ||
-          "Could not load the booking. Please try again."
-      );
+    } catch (err) {
+      setError(mapApiError(err));
     } finally {
       setLoadingBooking(false);
     }
@@ -201,11 +232,8 @@ export default function ReservationFormPage() {
   }, []);
 
   useEffect(() => {
-    if (isEdit) {
-      loadBooking();
-    } else {
-      setForm(emptyForm);
-    }
+    if (isEdit) loadBooking();
+    else setForm(emptyForm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -227,57 +255,57 @@ export default function ReservationFormPage() {
       return false;
     }
 
-    const nightsValue = calculateNights(form.checkIn, form.checkOut);
-    if (!nightsValue || nightsValue <= 0) {
+    const n = diffNights(form.checkIn, form.checkOut);
+    if (!n || n <= 0) {
       setError("Check-out date must be later than check-in.");
       return false;
     }
 
+    setError(null);
     return true;
   };
 
   /* === Submit === */
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError(null);
+    e.preventDefault();
+    setError(null);
 
-  // Solo validación local acá
-  if (!validateForm()) {
-    toast.warning(error ?? "Please review the form.");
-    return;
-  }
-
-  const payload = {
-    roomId: Number(form.roomId),
-    guestId: Number(form.guestId),
-    checkIn: form.checkIn,
-    checkOut: form.checkOut,
-  };
-
-  try {
-    setLoading(true);
-
-    if (isEdit && id) {
-      const bookingId = Number(id);
-      await api.put(`/bookings/${bookingId}`, payload);
-      toast.success("Booking updated successfully");
-    } else {
-      await api.post("/bookings", payload);
-      toast.success("Booking created successfully");
+    if (!validateForm()) {
+      toast.warning(error ?? "Please review the form.");
+      return;
     }
 
-    navigate("/reservations");
-  } finally {
-    setLoading(false);
-  }
-};
+    const payload = {
+      roomId: Number(form.roomId),
+      guestId: Number(form.guestId),
+      checkIn: form.checkIn,   // YYYY-MM-DD
+      checkOut: form.checkOut, // YYYY-MM-DD
+    };
 
-  const handleCancel = () => {
-    navigate("/reservations");
+    try {
+      setLoading(true);
+
+      if (isEdit && id) {
+        const bookingId = Number(id);
+        await api.put(`/bookings/${bookingId}`, payload);
+        toast.success("Booking updated successfully");
+      } else {
+        await api.post("/bookings", payload);
+        toast.success("Booking created successfully");
+      }
+
+      navigate("/reservations");
+    } catch (err) {
+      const message = mapApiError(err);
+      toast.error(message);
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  /* === UI === */
+  const handleCancel = () => navigate("/reservations");
 
   return (
     <div className="space-y-6">
@@ -307,7 +335,7 @@ export default function ReservationFormPage() {
 
       <Card>
         <CardBody>
-          {(loadingBooking && isEdit) ? (
+          {loadingBooking && isEdit ? (
             <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
@@ -317,7 +345,6 @@ export default function ReservationFormPage() {
                 number of nights.
               </p>
 
-              {/* Guest + Room */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
@@ -370,7 +397,6 @@ export default function ReservationFormPage() {
                 </div>
               </div>
 
-              {/* Dates */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
@@ -399,7 +425,6 @@ export default function ReservationFormPage() {
                 </div>
               </div>
 
-              {/* Dynamic summary of selection */}
               {(selectedRoom || selectedGuest || nights || suggestedTotal) && (
                 <div className="border rounded p-3 bg-slate-50 text-xs text-slate-700 space-y-1">
                   {selectedGuest && (

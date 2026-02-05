@@ -1,25 +1,68 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { toast } from "sonner";
+import { useAuth, type AuthUser } from "../auth/AuthContext";
+import axios from "axios";
+
+/**
+ * Here I describe the possible login responses:
+ * - Ideal: token + user
+ * - Fallback: token only (then I fetch /auth/me)
+ */
+type LoginResponse =
+  | {
+      token: string;
+      user: AuthUser;
+      message?: string;
+    }
+  | {
+      token: string;
+      message?: string;
+    };
 
 export default function Login() {
+  // Here I store form state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Úsalo solo para validación local (no para errores del backend)
+  // Here I keep an inline error message only for this form
   const [error, setError] = useState("");
 
+  // Here I track loading state to disable inputs and prevent double submits
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Here I use AuthContext to persist token/user after successful login
+  const { login } = useAuth();
+
+  /**
+   * Here I compute where to redirect after login.
+   * If ProtectedRoute sent the user here, it usually includes "from".
+   */
+  const from =
+    (location.state as any)?.from?.pathname ||
+    (location.state as any)?.from ||
+    "/";
+
+  /**
+   * Here I handle the login submit:
+   * - validate fields
+   * - call /auth/login
+   * - ensure I have token + user (fallback to /auth/me if needed)
+   * - persist auth state and redirect
+   */
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    // Validación local mínima (opcional)
+    // Here I clear old errors before validating
     setError("");
+
+    // Here I do a basic client-side validation
     if (!email.trim() || !password.trim()) {
       setError("Email and password are required.");
       return;
@@ -28,17 +71,57 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const res = await api.post("/auth/login", { email, password });
+      // Here I request login (Axios interceptors will attach loader/toasts globally)
+      const res = await api.post<LoginResponse>("/auth/login", {
+        email,
+        password,
+      });
 
-      localStorage.setItem("token", res.data.token);
+      // Here I enforce that login must return a token
+      const token = (res.data as any)?.token;
+      if (!token) {
+        setError("Login response did not include a token.");
+        return;
+      }
 
-      toast.success("Signed in successfully");
-      navigate("/");
-    } catch (err) {
-      // El interceptor global ya hace toast.error(...)
-      // Si querés mostrar algo inline SOLO para este caso, descomenta:
-      // setError("Could not sign in. Please check your credentials.");
+      /**
+       * Here I prefer using the user object returned by /auth/login.
+       * If it’s missing, I fetch /auth/me as a reliable fallback.
+       */
+      const userFromLogin = (res.data as any)?.user as AuthUser | undefined;
+
+      let user: AuthUser;
+      if (userFromLogin?.id && userFromLogin?.email && userFromLogin?.role) {
+        user = userFromLogin;
+      } else {
+        // Here I disable the global toast because I want to handle inline feedback myself
+        const me = await api.get("/auth/me", { silentErrorToast: true } as any);
+        const payload = (me.data?.data ?? me.data) as AuthUser;
+        user = payload;
+      }
+
+      // Here I store token + user in AuthContext (and persist them via localStorage)
+      login({ token, user });
+
+      // Here I show a friendly success toast and redirect
+      toast.success(`Welcome, ${user.name || user.email}!`);
+      navigate(from, { replace: true });
+    } catch (err: unknown) {
+      /**
+       * Note: My Axios interceptor already shows a global toast error,
+       * but here I also set an inline error to keep the form user-friendly.
+       */
+      const message = axios.isAxiosError(err)
+        ? ((err.response?.data as any)?.error as string) ||
+          ((err.response?.data as any)?.message as string) ||
+          err.message
+        : err instanceof Error
+        ? err.message
+        : "Could not sign in. Please try again.";
+
+      setError(message);
     } finally {
+      // Here I always stop loading even if the request fails
       setLoading(false);
     }
   };
@@ -65,6 +148,7 @@ export default function Login() {
               Enter your credentials to access the dashboard.
             </p>
 
+            {/* Here I show an inline error message for the form */}
             {error && (
               <div className="mb-4 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
                 {error}
@@ -84,6 +168,7 @@ export default function Login() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
+                  autoComplete="email"
                 />
               </div>
 
@@ -99,6 +184,7 @@ export default function Login() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
+                  autoComplete="current-password"
                 />
               </div>
 
@@ -109,6 +195,7 @@ export default function Login() {
 
             <p className="mt-4 text-center text-xs text-slate-500">
               Don&apos;t have an account?{" "}
+              {/* Here I navigate to signup without reloading the page */}
               <button
                 type="button"
                 className="text-blue-600 hover:underline"

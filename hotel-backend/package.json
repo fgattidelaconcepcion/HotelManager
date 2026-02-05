@@ -4,16 +4,22 @@
   "description": "Backend for the hotel management app",
   "main": "dist/services/server.js",
   "scripts": {
-    "dev": "...",
+    "dev": "ts-node-dev --respawn --transpile-only src/services/server.ts",
     "build": "prisma generate && tsc",
-    "start": "npm run migrate && npm run seed && node dist/services/server.js",
+    "start": "node dist/services/server.js",
     "migrate": "prisma migrate deploy",
     "seed": "prisma db seed"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
-  "keywords": ["node", "express", "typescript", "hotel", "backend"],
+  "keywords": [
+    "node",
+    "express",
+    "typescript",
+    "hotel",
+    "backend"
+  ],
   "author": "Franco Gatti",
   "license": "MIT",
   "dependencies": {
@@ -24,8 +30,8 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.1",
-    "zod": "^4.1.12",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

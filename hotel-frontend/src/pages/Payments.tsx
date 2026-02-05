@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import api from "../api/api";
@@ -7,6 +7,7 @@ import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { toast } from "sonner";
+import RoleGate from "../auth/RoleGate";
 
 type PaymentMethod = "cash" | "card" | "transfer";
 type PaymentStatus = "pending" | "completed" | "failed";
@@ -48,7 +49,6 @@ export interface Payment {
 }
 
 /* === Booking types (for selector) === */
-
 interface BookingGuest {
   id: number;
   name: string;
@@ -94,6 +94,18 @@ const emptyForm: PaymentFormState = {
   status: "pending",
 };
 
+function mapApiError(err: unknown) {
+  if (axios.isAxiosError(err)) {
+    return (
+      (err.response?.data as any)?.error ||
+      err.message ||
+      "Request failed. Please try again."
+    );
+  }
+  if (err instanceof Error) return err.message;
+  return "Something went wrong. Please try again.";
+}
+
 export default function Payments() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -112,219 +124,14 @@ export default function Payments() {
   const [filterBookingId, setFilterBookingId] = useState("");
   const [filterStatus, setFilterStatus] = useState<"" | PaymentStatus>("");
 
-  // to auto-open only once from /payments?bookingId=...
   const [autoOpenedFromBooking, setAutoOpenedFromBooking] = useState(false);
 
-const loadPayments = async () => {
-  try {
-    setLoading(true);
-    setError(null);
-
-    const params: Record<string, string> = {};  // Aquí definimos el objeto params
-
-    if (filterBookingId.trim()) {
-      params.bookingId = filterBookingId.trim();
-    }
-
-    if (filterStatus) {
-      params.status = filterStatus;
-    }
-
-    const response = await api.get("/payments", { params });
-    const data = response.data?.data ?? response.data;
-
-    setPayments(Array.isArray(data) ? data : []);
-  } catch (err: unknown) {
-  console.error("Error loading payments", err);
-
-  const message =
-    axios.isAxiosError(err)
-      ? (err.response?.data as any)?.error || err.message
-      : err instanceof Error
-      ? err.message
-      : "There was an error loading payments. Please try again.";
-
-  setError(message);
-} finally {
-  setLoading(false);
-}
-
-};
-
-
-  const loadBookings = async () => {
-    try {
-      setLoadingBookings(true);
-      const res = await api.get("/bookings");
-      const data = res.data?.data ?? res.data;
-      setBookings(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Error loading bookings", err);
-      // not critical
-    } finally {
-      setLoadingBookings(false);
-    }
-  };
-
-  useEffect(() => {
-    loadPayments();
-    loadBookings();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Auto-open modal if coming from /payments?bookingId=...
-  useEffect(() => {
-    const bookingIdParam = searchParams.get("bookingId");
-    if (!bookingIdParam) return;
-    if (autoOpenedFromBooking) return;
-
-    const bookingIdNum = Number(bookingIdParam);
-    if (!bookingIdNum || Number.isNaN(bookingIdNum)) return;
-
-    // wait for bookings
-    if (loadingBookings) return;
-
-    const exists = bookings.some((b) => b.id === bookingIdNum);
-    if (!exists) return;
-
-    setForm((prev) => ({
-      ...prev,
-      bookingId: String(bookingIdNum),
-    }));
-    setIsEditing(false);
-    setShowModal(true);
-    setAutoOpenedFromBooking(true);
-  }, [searchParams, bookings, loadingBookings, autoOpenedFromBooking]);
-
-  const handleOpenCreate = () => {
-    setIsEditing(false);
-    setForm(emptyForm);
-    setShowModal(true);
-  };
-
-  const handleOpenEdit = (payment: Payment) => {
-    setIsEditing(true);
-    setForm({
-      id: payment.id,
-      bookingId: String(payment.bookingId),
-      amount: String(payment.amount),
-      method: payment.method,
-      status: payment.status,
-    });
-    setShowModal(true);
-  };
-
-  const handleCloseModal = () => {
-    setShowModal(false);
-    setForm(emptyForm);
-    setIsEditing(false);
-  };
-
-  const handleChange = (
-    field: keyof PaymentFormState,
-    value: string | PaymentMethod | PaymentStatus
-  ) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  const validateForm = () => {
-    if (!form.bookingId.trim()) {
-      setError("Reservation is required.");
-      return false;
-    }
-
-    const bookingIdNum = Number(form.bookingId);
-    if (isNaN(bookingIdNum)) {
-      setError("Reservation ID must be a valid number.");
-      return false;
-    }
-
-    const bookingExists = bookings.some((b) => b.id === bookingIdNum);
-    if (!bookingExists) {
-      setError("The selected reservation does not exist.");
-      return false;
-    }
-
-    if (!form.amount.trim()) {
-      setError("Amount is required.");
-      return false;
-    }
-    const amountNumber = Number(form.amount);
-    if (isNaN(amountNumber) || amountNumber <= 0) {
-      setError("Amount must be a number greater than 0.");
-      return false;
-    }
-    return true;
-  };
-
- const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError(null);
-
-  if (!validateForm()) {
-    toast.warning(error ?? "Please review the form.");
-    return;
-  }
-
-  const payload = {
-    bookingId: Number(form.bookingId),
-    amount: Number(form.amount),
-    method: form.method,
-    status: form.status,
-  };
-
-  try {
-    setLoading(true);
-
-    if (isEditing && form.id != null) {
-      await api.put(`/payments/${form.id}`, payload);
-      toast.success("Payment updated");
-    } else {
-      await api.post("/payments", payload);
-      toast.success("Payment created");
-    }
-
-    await loadPayments();
-    handleCloseModal();
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-  const handleDelete = async (payment: Payment) => {
-  const ok = window.confirm(
-    `Are you sure you want to delete payment #${payment.id} (reservation #${payment.bookingId})?`
-  );
-  if (!ok) return;
-
-  try {
-    setLoading(true);
-    setError(null);
-
-    await api.delete(`/payments/${payment.id}`);
-    toast.success("Payment deleted");
-
-    await loadPayments();
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-  const handleApplyFilters = (e: React.FormEvent) => {
-    e.preventDefault();
-    loadPayments();
-  };
-
-  const handleClearFilters = () => {
-    setFilterBookingId("");
-    setFilterStatus("");
-    loadPayments();
-  };
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat("en-UY", {
+      style: "currency",
+      currency: "UYU",
+      minimumFractionDigits: 0,
+    }).format(value);
 
   const formatDateTime = (value: string) => {
     try {
@@ -342,13 +149,6 @@ const loadPayments = async () => {
     }
   };
 
-  const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("en-UY", {
-      style: "currency",
-      currency: "UYU",
-      minimumFractionDigits: 0,
-    }).format(value);
-
   const getStatusLabel = (status: PaymentStatus) => {
     switch (status) {
       case "pending":
@@ -360,6 +160,12 @@ const loadPayments = async () => {
       default:
         return status;
     }
+  };
+
+  const getStatusVariant = (status: PaymentStatus) => {
+    if (status === "completed") return "success";
+    if (status === "pending") return "warning";
+    return "danger";
   };
 
   const getMethodLabel = (method: PaymentMethod) => {
@@ -375,39 +181,138 @@ const loadPayments = async () => {
     }
   };
 
-  // === Totals ===
-  const totalAmount = payments.reduce((sum, p) => sum + p.amount, 0);
-  const totalByStatus: Record<PaymentStatus, number> = {
-    pending: payments
-      .filter((p) => p.status === "pending")
-      .reduce((s, p) => s + p.amount, 0),
-    completed: payments
-      .filter((p) => p.status === "completed")
-      .reduce((s, p) => s + p.amount, 0),
-    failed: payments
-      .filter((p) => p.status === "failed")
-      .reduce((s, p) => s + p.amount, 0),
+  const buildPaymentsParams = (override?: {
+    bookingId?: string;
+    status?: "" | PaymentStatus;
+  }) => {
+    const bookingIdValue =
+      override?.bookingId !== undefined ? override.bookingId : filterBookingId;
+
+    const statusValue =
+      override?.status !== undefined ? override.status : filterStatus;
+
+    const params: Record<string, string> = {};
+    if (bookingIdValue?.trim()) params.bookingId = bookingIdValue.trim();
+    if (statusValue) params.status = statusValue;
+
+    return params;
   };
 
-  // === Selected booking info in modal ===
+  const loadPayments = async (override?: {
+    bookingId?: string;
+    status?: "" | PaymentStatus;
+  }) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const params = buildPaymentsParams(override);
+      const response = await api.get("/payments", { params });
+      const data = response.data?.data ?? response.data;
+
+      setPayments(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(mapApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadBookings = async () => {
+    try {
+      setLoadingBookings(true);
+      const res = await api.get("/bookings");
+      const data = res.data?.data ?? res.data;
+      setBookings(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error loading bookings", err);
+    } finally {
+      setLoadingBookings(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPayments();
+    loadBookings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const bookingIdParam = searchParams.get("bookingId");
+    if (!bookingIdParam) return;
+    if (autoOpenedFromBooking) return;
+
+    const bookingIdNum = Number(bookingIdParam);
+    if (!bookingIdNum || Number.isNaN(bookingIdNum)) return;
+
+    if (loadingBookings) return;
+
+    const exists = bookings.some((b) => b.id === bookingIdNum);
+    if (!exists) return;
+
+    setForm((prev) => ({ ...prev, bookingId: String(bookingIdNum) }));
+    setIsEditing(false);
+    setShowModal(true);
+    setAutoOpenedFromBooking(true);
+  }, [searchParams, bookings, loadingBookings, autoOpenedFromBooking]);
+
+  const handleOpenCreate = () => {
+    setIsEditing(false);
+    setError(null);
+    setForm(emptyForm);
+    setShowModal(true);
+  };
+
+  const handleOpenEdit = (payment: Payment) => {
+    setIsEditing(true);
+    setError(null);
+    setForm({
+      id: payment.id,
+      bookingId: String(payment.bookingId),
+      amount: String(payment.amount),
+      method: payment.method,
+      status: payment.status,
+    });
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setForm(emptyForm);
+    setIsEditing(false);
+    setError(null);
+  };
+
+  const handleChange = (
+    field: keyof PaymentFormState,
+    value: string | PaymentMethod | PaymentStatus
+  ) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
   const selectedBookingId = form.bookingId ? Number(form.bookingId) : null;
-  const selectedBooking = selectedBookingId
-    ? bookings.find((b) => b.id === selectedBookingId) || null
-    : null;
+  const selectedBooking = useMemo(() => {
+    if (!selectedBookingId || Number.isNaN(selectedBookingId)) return null;
+    return bookings.find((b) => b.id === selectedBookingId) ?? null;
+  }, [bookings, selectedBookingId]);
 
-  const totalPaidForSelected = selectedBooking
-    ? payments
-        .filter(
-          (p) =>
-            p.bookingId === selectedBooking.id && p.status === "completed"
-        )
-        .reduce((sum, p) => sum + p.amount, 0)
-    : 0;
+  const completedPaymentsForSelected = useMemo(() => {
+    if (!selectedBooking) return [];
+    return payments.filter((p) => {
+      if (p.bookingId !== selectedBooking.id) return false;
+      if (p.status !== "completed") return false;
+      if (isEditing && form.id != null && p.id === form.id) return false;
+      return true;
+    });
+  }, [payments, selectedBooking, isEditing, form.id]);
 
-  const remainingForSelected =
-    selectedBooking && selectedBooking.totalPrice != null
-      ? selectedBooking.totalPrice - totalPaidForSelected
-      : 0;
+  const totalPaidForSelected = completedPaymentsForSelected.reduce(
+    (sum, p) => sum + p.amount,
+    0
+  );
+
+  const totalPrice = selectedBooking?.totalPrice ?? 0;
+  const remainingForSelected = totalPrice - totalPaidForSelected;
 
   const isBookingFullyPaid = !!selectedBooking && remainingForSelected <= 0;
 
@@ -417,13 +322,138 @@ const loadPayments = async () => {
 
     setForm((prev) => ({
       ...prev,
-      amount: String(remainingForSelected),
+      amount: String(Math.max(0, Math.floor(remainingForSelected))),
     }));
   };
 
+  const validateForm = () => {
+    setError(null);
+
+    if (!form.bookingId.trim()) {
+      setError("Reservation is required.");
+      return false;
+    }
+
+    const bookingIdNum = Number(form.bookingId);
+    if (Number.isNaN(bookingIdNum) || bookingIdNum <= 0) {
+      setError("Reservation ID must be a valid number.");
+      return false;
+    }
+
+    const bookingExists = bookings.some((b) => b.id === bookingIdNum);
+    if (!bookingExists) {
+      setError("The selected reservation does not exist.");
+      return false;
+    }
+
+    if (!form.amount.trim()) {
+      setError("Amount is required.");
+      return false;
+    }
+
+    const amountNumber = Number(form.amount);
+    if (Number.isNaN(amountNumber) || amountNumber <= 0) {
+      setError("Amount must be a number greater than 0.");
+      return false;
+    }
+
+    if (selectedBooking && form.status === "completed") {
+      if (amountNumber > remainingForSelected) {
+        setError(
+          `Amount exceeds the remaining balance (${formatCurrency(
+            Math.max(0, remainingForSelected)
+          )}).`
+        );
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      toast.warning(error ?? "Please review the form.");
+      return;
+    }
+
+    const payload = {
+      bookingId: Number(form.bookingId),
+      amount: Number(form.amount),
+      method: form.method,
+      status: form.status,
+    };
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (isEditing && form.id != null) {
+        await api.put(`/payments/${form.id}`, payload);
+        toast.success("Payment updated");
+      } else {
+        await api.post("/payments", payload);
+        toast.success("Payment created");
+      }
+
+      await loadPayments();
+      handleCloseModal();
+    } catch (err) {
+      const message = mapApiError(err);
+      setError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (payment: Payment) => {
+    const ok = window.confirm(
+      `Are you sure you want to delete payment #${payment.id} (reservation #${payment.bookingId})?`
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      await api.delete(`/payments/${payment.id}`);
+      toast.success("Payment deleted");
+      await loadPayments();
+    } catch (err) {
+      const message = mapApiError(err);
+      setError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplyFilters = (e: React.FormEvent) => {
+    e.preventDefault();
+    loadPayments();
+  };
+
+  const handleClearFilters = () => {
+    setFilterBookingId("");
+    setFilterStatus("");
+    loadPayments({ bookingId: "", status: "" });
+  };
+
+  const totalAmount = payments.reduce((sum, p) => sum + p.amount, 0);
+  const totalByStatus: Record<PaymentStatus, number> = {
+    pending: payments.filter((p) => p.status === "pending").reduce((s, p) => s + p.amount, 0),
+    completed: payments.filter((p) => p.status === "completed").reduce((s, p) => s + p.amount, 0),
+    failed: payments.filter((p) => p.status === "failed").reduce((s, p) => s + p.amount, 0),
+  };
+
+  const disableCreateCompletedWhenFullyPaid =
+    !isEditing && isBookingFullyPaid && form.status === "completed";
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader
         title="Payments"
         description="Manage payments linked to reservations."
@@ -443,49 +473,34 @@ const loadPayments = async () => {
         }
       />
 
-      {/* Totals summary */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-4">
             <div>
               <p className="text-xs text-gray-500">Total payments</p>
-              <p className="text-lg font-semibold mt-1">
-                {formatCurrency(totalAmount)}
-              </p>
+              <p className="text-lg font-semibold mt-1">{formatCurrency(totalAmount)}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500">Completed</p>
-              <p className="text-lg font-semibold mt-1">
-                {formatCurrency(totalByStatus.completed)}
-              </p>
+              <p className="text-lg font-semibold mt-1">{formatCurrency(totalByStatus.completed)}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500">Pending</p>
-              <p className="text-lg font-semibold mt-1">
-                {formatCurrency(totalByStatus.pending)}
-              </p>
+              <p className="text-lg font-semibold mt-1">{formatCurrency(totalByStatus.pending)}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500">Failed</p>
-              <p className="text-lg font-semibold mt-1">
-                {formatCurrency(totalByStatus.failed)}
-              </p>
+              <p className="text-lg font-semibold mt-1">{formatCurrency(totalByStatus.failed)}</p>
             </div>
           </div>
         </CardBody>
       </Card>
 
-      {/* Filters */}
       <Card>
         <CardBody>
-          <form
-            onSubmit={handleApplyFilters}
-            className="flex flex-wrap gap-4 items-end"
-          >
+          <form onSubmit={handleApplyFilters} className="flex flex-wrap gap-4 items-end">
             <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700">
-                Reservation ID
-              </label>
+              <label className="text-sm font-medium text-gray-700">Reservation ID</label>
               <input
                 type="text"
                 value={filterBookingId}
@@ -496,14 +511,10 @@ const loadPayments = async () => {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700">
-                Status
-              </label>
+              <label className="text-sm font-medium text-gray-700">Status</label>
               <select
                 value={filterStatus}
-                onChange={(e) =>
-                  setFilterStatus(e.target.value as "" | PaymentStatus)
-                }
+                onChange={(e) => setFilterStatus(e.target.value as "" | PaymentStatus)}
                 className="mt-1 border rounded px-3 py-2 text-sm w-44"
               >
                 <option value="">All</option>
@@ -514,14 +525,10 @@ const loadPayments = async () => {
             </div>
 
             <div className="flex gap-2">
-              <Button type="submit" variant="secondary">
+              <Button type="submit" variant="secondary" disabled={loading}>
                 Apply filters
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleClearFilters}
-              >
+              <Button type="button" variant="ghost" onClick={handleClearFilters} disabled={loading}>
                 Clear
               </Button>
             </div>
@@ -529,7 +536,6 @@ const loadPayments = async () => {
         </CardBody>
       </Card>
 
-      {/* Status messages */}
       {error && (
         <Card>
           <CardBody>
@@ -540,49 +546,28 @@ const loadPayments = async () => {
         </Card>
       )}
 
-      {/* Payments table */}
       <Card>
         <CardBody>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    ID
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Reservation
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Guest
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Room
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Amount
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Method
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Status
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Date
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Actions
-                  </th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">ID</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Reservation</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Guest</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Room</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">Amount</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Method</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Status</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-700">Date</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-700">Actions</th>
                 </tr>
               </thead>
+
               <tbody>
                 {payments.length === 0 && !loading && (
                   <tr>
-                    <td
-                      colSpan={9}
-                      className="px-4 py-6 text-center text-gray-500"
-                    >
+                    <td colSpan={9} className="px-4 py-6 text-center text-gray-500">
                       No payments found.
                     </td>
                   </tr>
@@ -592,9 +577,7 @@ const loadPayments = async () => {
                   <tr key={payment.id} className="border-t last:border-b">
                     <td className="px-4 py-2 align-top">{payment.id}</td>
                     <td className="px-4 py-2 align-top">#{payment.bookingId}</td>
-                    <td className="px-4 py-2 align-top">
-                      {payment.booking?.guest?.name || "-"}
-                    </td>
+                    <td className="px-4 py-2 align-top">{payment.booking?.guest?.name || "-"}</td>
                     <td className="px-4 py-2 align-top">
                       {payment.booking?.room
                         ? `Room ${payment.booking.room.number} (floor ${payment.booking.room.floor})`
@@ -603,52 +586,43 @@ const loadPayments = async () => {
                     <td className="px-4 py-2 align-top text-right">
                       {formatCurrency(payment.amount)}
                     </td>
+                    <td className="px-4 py-2 align-top">{getMethodLabel(payment.method)}</td>
                     <td className="px-4 py-2 align-top">
-                      {getMethodLabel(payment.method)}
-                    </td>
-                    <td className="px-4 py-2 align-top">
-                      <Badge
-                        variant={
-                          payment.status === "completed"
-                            ? "success"
-                            : payment.status === "pending"
-                            ? "warning"
-                            : "danger"
-                        }
-                      >
+                      <Badge variant={getStatusVariant(payment.status)}>
                         {getStatusLabel(payment.status)}
                       </Badge>
                     </td>
-                    <td className="px-4 py-2 align-top">
-                      {formatDateTime(payment.createdAt)}
-                    </td>
+                    <td className="px-4 py-2 align-top">{formatDateTime(payment.createdAt)}</td>
+
                     <td className="px-4 py-2 align-top text-right space-x-2">
                       <Button
                         type="button"
                         variant="ghost"
                         className="text-xs px-3 py-1"
                         onClick={() => handleOpenEdit(payment)}
+                        disabled={loading}
                       >
                         Edit
                       </Button>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        className="text-xs px-3 py-1"
-                        onClick={() => handleDelete(payment)}
-                      >
-                        Delete
-                      </Button>
+
+                      <RoleGate allowed={["admin"]}>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          className="text-xs px-3 py-1"
+                          onClick={() => handleDelete(payment)}
+                          disabled={loading}
+                        >
+                          Delete
+                        </Button>
+                      </RoleGate>
                     </td>
                   </tr>
                 ))}
 
                 {loading && (
                   <tr>
-                    <td
-                      colSpan={9}
-                      className="px-4 py-4 text-center text-gray-500"
-                    >
+                    <td colSpan={9} className="px-4 py-4 text-center text-gray-500">
                       Loading...
                     </td>
                   </tr>
@@ -659,7 +633,6 @@ const loadPayments = async () => {
         </CardBody>
       </Card>
 
-      {/* Create/Edit payment modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <Card className="w-full max-w-md">
@@ -669,22 +642,21 @@ const loadPayments = async () => {
               </h3>
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Booking selector */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
                     Reservation
                   </label>
+
                   <select
                     value={form.bookingId}
                     onChange={(e) => handleChange("bookingId", e.target.value)}
                     className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                    disabled={loadingBookings}
+                    disabled={loadingBookings || loading}
                   >
                     <option value="">
-                      {loadingBookings
-                        ? "Loading reservations..."
-                        : "Select a reservation"}
+                      {loadingBookings ? "Loading reservations..." : "Select a reservation"}
                     </option>
+
                     {bookings.map((b) => (
                       <option key={b.id} value={b.id}>
                         #{b.id} -{" "}
@@ -701,7 +673,6 @@ const loadPayments = async () => {
                     A reservation with this ID must exist.
                   </p>
 
-                  {/* Quick actions */}
                   <div className="flex flex-wrap gap-2 mt-2">
                     <Button
                       type="button"
@@ -736,18 +707,16 @@ const loadPayments = async () => {
                         {formatCurrency(selectedBooking.totalPrice)}
                       </p>
                       <p>
-                        <span className="font-semibold">Total paid:</span>{" "}
+                        <span className="font-semibold">Total paid (completed):</span>{" "}
                         {formatCurrency(totalPaidForSelected)}
                       </p>
                       <p>
                         <span className="font-semibold">Due:</span>{" "}
-                        {formatCurrency(remainingForSelected)}
+                        {formatCurrency(Math.max(0, remainingForSelected))}
                       </p>
                       <p>
                         <span className="font-semibold">Status:</span>{" "}
-                        {isBookingFullyPaid
-                          ? "✅ Fully paid"
-                          : "🟡 Balance due"}
+                        {isBookingFullyPaid ? "✅ Fully paid" : "🟡 Balance due"}
                       </p>
 
                       {!isBookingFullyPaid && remainingForSelected > 0 && (
@@ -773,7 +742,6 @@ const loadPayments = async () => {
                   )}
                 </div>
 
-                {/* Amount */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
                     Amount
@@ -786,10 +754,15 @@ const loadPayments = async () => {
                     placeholder="e.g. 1200"
                     min={0}
                     step={1}
+                    disabled={loading}
                   />
+                  {selectedBooking && form.status === "completed" && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Completed payments can’t exceed the remaining balance.
+                    </p>
+                  )}
                 </div>
 
-                {/* Method + Status */}
                 <div className="flex gap-4">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700">
@@ -801,6 +774,7 @@ const loadPayments = async () => {
                         handleChange("method", e.target.value as PaymentMethod)
                       }
                       className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
                     >
                       <option value="cash">Cash</option>
                       <option value="card">Card</option>
@@ -818,6 +792,7 @@ const loadPayments = async () => {
                         handleChange("status", e.target.value as PaymentStatus)
                       }
                       className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
                     >
                       <option value="pending">Pending</option>
                       <option value="completed">Completed</option>
@@ -826,17 +801,24 @@ const loadPayments = async () => {
                   </div>
                 </div>
 
+                {error && (
+                  <div className="bg-red-50 text-red-800 px-3 py-2 rounded text-xs">
+                    {error}
+                  </div>
+                )}
+
                 <div className="flex justify-end gap-2 mt-4">
                   <Button
                     type="button"
                     variant="ghost"
                     onClick={handleCloseModal}
+                    disabled={loading}
                   >
                     Cancel
                   </Button>
                   <Button
                     type="submit"
-                    disabled={loading || (!isEditing && isBookingFullyPaid)}
+                    disabled={loading || disableCreateCompletedWhenFullyPaid}
                   >
                     {isEditing ? "Save changes" : "Create payment"}
                   </Button>
@@ -848,4 +830,4 @@ const loadPayments = async () => {
       )}
     </div>
   );
-}
+}  

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type React from "react";
 import api from "../api/api";
@@ -55,6 +55,48 @@ interface Payment {
   createdAt: string;
 }
 
+function normalizeStatus(status: string): BookingStatus | null {
+  const s = String(status || "").toLowerCase();
+  if (
+    s === "pending" ||
+    s === "confirmed" ||
+    s === "cancelled" ||
+    s === "checked_in" ||
+    s === "checked_out"
+  ) {
+    return s;
+  }
+  if (s === "canceled") return "cancelled";
+  return null;
+}
+
+function mapApiError(err: any): string {
+  const code = err?.response?.data?.code as string | undefined;
+  const serverMsg = err?.response?.data?.error as string | undefined;
+
+  switch (code) {
+    case "ROOM_NOT_AVAILABLE":
+      return "Room is not available for the selected dates.";
+    case "ROOM_IN_MAINTENANCE":
+      return "This room is under maintenance and can’t be booked.";
+    case "INVALID_DATES":
+      return "Check-out must be after check-in.";
+    case "BOOKING_LOCKED":
+      return "This reservation can’t be edited in its current status.";
+    default:
+      return serverMsg || "Something went wrong. Please try again.";
+  }
+}
+
+
+const transitions: Record<BookingStatus, BookingStatus[]> = {
+  pending: ["confirmed", "cancelled"],
+  confirmed: ["checked_in", "cancelled"],
+  checked_in: ["checked_out"],
+  checked_out: [],
+  cancelled: [],
+};
+
 export default function ReservationDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -64,6 +106,7 @@ export default function ReservationDetailPage() {
   const [loading, setLoading] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const bookingIdNumber = id ? Number(id) : NaN;
@@ -103,17 +146,16 @@ export default function ReservationDetailPage() {
   };
 
   const getBookingStatusVariant = (status: string) => {
-  const lower = status.toLowerCase();
+    const lower = status.toLowerCase();
 
-  if (lower === "pending") return "warning";
-  if (lower === "confirmed") return "default";
-  if (lower === "cancelled" || lower === "canceled") return "danger";
-  if (lower === "checked_in") return "success";
-  if (lower === "checked_out") return "default";
+    if (lower === "pending") return "warning";
+    if (lower === "confirmed") return "default";
+    if (lower === "cancelled" || lower === "canceled") return "danger";
+    if (lower === "checked_in") return "success";
+    if (lower === "checked_out") return "default";
 
-  return "default";
-};
-
+    return "default";
+  };
 
   const getMethodLabel = (method: Payment["method"]) => {
     switch (method) {
@@ -157,10 +199,7 @@ export default function ReservationDetailPage() {
       setBooking(data ?? null);
     } catch (err: any) {
       console.error("Error loading booking detail", err);
-      setError(
-        err?.response?.data?.error ||
-          "Could not load the reservation. Please try again."
-      );
+      setError(mapApiError(err));
     } finally {
       setLoading(false);
     }
@@ -182,17 +221,27 @@ export default function ReservationDetailPage() {
     }
   };
 
+  const refreshAll = async () => {
+    await Promise.all([loadBooking(), loadPayments()]);
+  };
+
   useEffect(() => {
-    if (!id || isNaN(bookingIdNumber)) {
+    if (!id || Number.isNaN(bookingIdNumber)) {
       setError("Invalid reservation ID.");
       setLoading(false);
       return;
     }
 
-    loadBooking();
-    loadPayments();
+    refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const normalizedStatus = useMemo(
+    () => (booking ? normalizeStatus(booking.status as string) : null),
+    [booking]
+  );
+
+  const isLocked = normalizedStatus === "checked_out" || normalizedStatus === "cancelled";
 
   const totalPaid = payments
     .filter((p) => p.status === "completed")
@@ -224,55 +273,87 @@ export default function ReservationDetailPage() {
     navigate(`/payments?bookingId=${booking.id}`);
   };
 
-  const handleChangeStatus = async (nextStatus: BookingStatus) => {
+  const handleGoToEdit = () => {
     if (!booking) return;
+    
+    navigate(`/reservations/${booking.id}/edit`);
+  };
 
-    const current = (booking.status || "").toString().toLowerCase() as BookingStatus;
+  const handleDelete = async () => {
+    if (!booking || !normalizedStatus) return;
 
-    // Simple transition rules
-    if (current === "cancelled" || current === "checked_out") {
-      alert("This reservation is already finished and its status can't be changed.");
+    
+    if (!(normalizedStatus === "pending" || normalizedStatus === "cancelled")) {
+      setError("Only pending or cancelled reservations can be deleted.");
       return;
     }
 
-    let actionLabel = "";
-    if (nextStatus === "confirmed") actionLabel = "confirm this reservation";
-    if (nextStatus === "cancelled") actionLabel = "cancel this reservation";
-    if (nextStatus === "checked_in") actionLabel = "register check-in";
-    if (nextStatus === "checked_out") actionLabel = "register check-out";
+    const ok = window.confirm(
+      `Delete reservation #${booking.id}? This action cannot be undone.`
+    );
+    if (!ok) return;
 
-    const ok = window.confirm(`Are you sure you want to ${actionLabel}?`);
+    try {
+      setDeleting(true);
+      setError(null);
+
+      await api.delete(`/bookings/${booking.id}`);
+
+      navigate("/reservations");
+    } catch (err: any) {
+      console.error("Error deleting booking", err);
+      setError(mapApiError(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleChangeStatus = async (nextStatus: BookingStatus) => {
+    if (!booking || !normalizedStatus) return;
+
+  
+    const allowed = transitions[normalizedStatus]?.includes(nextStatus);
+    if (!allowed) {
+      setError(`Invalid status transition: ${normalizedStatus} → ${nextStatus}`);
+      return;
+    }
+
+    const ok = window.confirm(
+      `Are you sure you want to set status to "${nextStatus}"?`
+    );
     if (!ok) return;
 
     try {
       setUpdatingStatus(true);
       setError(null);
 
-      // uses /bookings/:id/status
-      await api.patch(`/bookings/${booking.id}/status`, {
-        status: nextStatus,
-      });
+      await api.patch(`/bookings/${booking.id}/status`, { status: nextStatus });
 
-      await loadBooking();
+      await refreshAll();
     } catch (err: any) {
       console.error("Error updating booking status", err);
-      setError(
-        err?.response?.data?.error ||
-          "Could not update reservation status. Please try again."
-      );
+      setError(mapApiError(err));
     } finally {
       setUpdatingStatus(false);
     }
   };
 
   const renderStatusActions = () => {
-    if (!booking) return null;
+    if (!booking || !normalizedStatus) return null;
 
-    const current = (booking.status || "").toString().toLowerCase() as BookingStatus;
+    const nexts = transitions[normalizedStatus] ?? [];
+
+    if (nexts.length === 0) {
+      return (
+        <p className="text-xs text-gray-500">
+          This reservation is finished. No further status changes can be made.
+        </p>
+      );
+    }
 
     const buttons: React.ReactElement[] = [];
 
-    if (current === "pending") {
+    if (nexts.includes("confirmed")) {
       buttons.push(
         <Button
           key="confirm"
@@ -285,19 +366,9 @@ export default function ReservationDetailPage() {
           Confirm
         </Button>
       );
-      buttons.push(
-        <Button
-          key="cancel"
-          type="button"
-          variant="danger"
-          className="text-xs px-3 py-1"
-          disabled={updatingStatus}
-          onClick={() => handleChangeStatus("cancelled")}
-        >
-          Cancel
-        </Button>
-      );
-    } else if (current === "confirmed") {
+    }
+
+    if (nexts.includes("checked_in")) {
       buttons.push(
         <Button
           key="checkin"
@@ -310,19 +381,9 @@ export default function ReservationDetailPage() {
           Check-in
         </Button>
       );
-      buttons.push(
-        <Button
-          key="cancel"
-          type="button"
-          variant="danger"
-          className="text-xs px-3 py-1"
-          disabled={updatingStatus}
-          onClick={() => handleChangeStatus("cancelled")}
-        >
-          Cancel
-        </Button>
-      );
-    } else if (current === "checked_in") {
+    }
+
+    if (nexts.includes("checked_out")) {
       buttons.push(
         <Button
           key="checkout"
@@ -337,11 +398,18 @@ export default function ReservationDetailPage() {
       );
     }
 
-    if (buttons.length === 0) {
-      return (
-        <p className="text-xs text-gray-500">
-          This reservation is finished. No further status changes can be made.
-        </p>
+    if (nexts.includes("cancelled")) {
+      buttons.push(
+        <Button
+          key="cancel"
+          type="button"
+          variant="danger"
+          className="text-xs px-3 py-1"
+          disabled={updatingStatus}
+          onClick={() => handleChangeStatus("cancelled")}
+        >
+          Cancel
+        </Button>
       );
     }
 
@@ -359,10 +427,7 @@ export default function ReservationDetailPage() {
   if (loading && !booking) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          title="Reservation details"
-          description="Loading reservation information..."
-        />
+        <PageHeader title="Reservation details" description="Loading reservation information..." />
         <Card>
           <CardBody>
             <p className="text-sm text-gray-500">Loading...</p>
@@ -405,12 +470,51 @@ export default function ReservationDetailPage() {
             <Button type="button" variant="ghost" onClick={handleGoBack}>
               Back to reservations
             </Button>
+
+            <Button type="button" variant="secondary" onClick={refreshAll}>
+              Refresh
+            </Button>
+
             <Button type="button" onClick={handleGoToAddPayment}>
               Add payment
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleGoToEdit}
+              disabled={isLocked}
+              title={isLocked ? "This reservation can’t be edited." : "Edit reservation"}
+            >
+              Edit
+            </Button>
+
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleDelete}
+              disabled={deleting || !normalizedStatus || !(normalizedStatus === "pending" || normalizedStatus === "cancelled")}
+              title={
+                normalizedStatus && !(normalizedStatus === "pending" || normalizedStatus === "cancelled")
+                  ? "Only pending/cancelled reservations can be deleted."
+                  : "Delete reservation"
+              }
+            >
+              {deleting ? "Deleting..." : "Delete"}
             </Button>
           </div>
         }
       />
+
+      {isLocked && (
+        <Card>
+          <CardBody>
+            <div className="bg-amber-50 text-amber-900 px-4 py-2 rounded text-sm">
+              This reservation is <span className="font-semibold">{String(booking.status)}</span> and editing is locked.
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
       {/* Main reservation data */}
       <Card>
@@ -455,11 +559,10 @@ export default function ReservationDetailPage() {
                 </Badge>
               </p>
               <p className="text-xs text-gray-500">
-                Created: {formatDateTime(booking.createdAt)} | Last updated:{" "}
+                Created: {formatDateTime(booking.createdAt)} | Last updated: {formatDateTime(booking.updatedAt)}
                 {formatDateTime(booking.updatedAt)}
               </p>
 
-              {/* Status change actions */}
               <div className="mt-3">{renderStatusActions()}</div>
             </div>
           </div>
@@ -521,21 +624,11 @@ export default function ReservationDetailPage() {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      ID
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Amount
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Method
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Status
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">
-                      Date
-                    </th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">ID</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Amount</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Method</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Status</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Date</th>
                   </tr>
                 </thead>
                 <tbody>

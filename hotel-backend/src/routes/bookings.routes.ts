@@ -1,36 +1,55 @@
 import { Router } from "express";
 import {
   getAllBookings,
+  getBookingById,
   createBooking,
   updateBooking,
   deleteBooking,
-  getBookingById,
   updateBookingStatus,
 } from "../controllers/bookings.controller";
 
+import { authorizeRoles } from "../middlewares/authorizeRoles";
+import { validateIdParam } from "../middlewares/validateIdParam";
+
 const router = Router();
 
-/*  
-     RUTAS DE RESERVAS
-     (en desarrollo SIN auth; después podemos volver a protegerlas)
-*/
+/**
+ * Bookings
+ * - receptionist: read + create + update + update status
+ * - admin: everything (including delete)
+ */
+router.get("/", authorizeRoles("admin", "receptionist"), getAllBookings);
 
-// Obtener todas las reservas
-router.get("/", getAllBookings);
+router.get(
+  "/:id",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  getBookingById
+);
 
-// Obtener una reserva por ID
-router.get("/:id", getBookingById);
+router.post("/", authorizeRoles("admin", "receptionist"), createBooking);
 
-// Crear reserva
-router.post("/", createBooking);
+router.put(
+  "/:id",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  updateBooking
+);
 
-// Actualizar fechas de la reserva
-router.put("/:id", updateBooking);
+//  status workflow
+router.patch(
+  "/:id/status",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  updateBookingStatus
+);
 
-// Actualizar estado de reserva (pending → confirmed → cancelled)
-router.patch("/:id/status", updateBookingStatus);
-
-// Eliminar reserva
-router.delete("/:id", deleteBooking);
+//  delete admin only
+router.delete(
+  "/:id",
+  authorizeRoles("admin"),
+  validateIdParam("id"),
+  deleteBooking
+);
 
 export default router;

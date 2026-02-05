@@ -4,20 +4,25 @@ import { hashPassword, comparePassword } from "../utils/hash";
 import { generateToken } from "../utils/jwt";
 import { z } from "zod";
 
-// Esquemas de validación
+// Here I define the validation schema for user registration
+// I use Zod to make sure the incoming data is correct
 const registerSchema = z.object({
   name: z.string().min(2).max(50),
   email: z.string().email(),
   password: z.string().min(6),
-  // ahora coincide con el enum de Prisma: admin | receptionist
+   // This matches the Prisma enum: "admin" | "receptionist"
+  // If it's not provided, I will use the default later
   role: z.enum(["admin", "receptionist"]).optional(),
 });
 
+// Here I define the validation schema for login
 const loginSchema = z.object({
   email: z.string().email(),
+  // I only check that a password is provided
   password: z.string(),
 });
 
+// Main authentication controller
 const authController = {
   async register(req: Request, res: Response) {
     try {
@@ -43,7 +48,7 @@ const authController = {
           name,
           email,
           password: hashed,
-          // si no se envía role, usamos el default "receptionist"
+          
           role: role ?? "receptionist",
         },
         select: { id: true, name: true, email: true, role: true },
@@ -82,7 +87,7 @@ const authController = {
         return res.status(401).json({ error: "Contraseña incorrecta" });
       }
 
-      // usamos tu helper generateToken para incluir el rol
+      // I use helper generateToken to include rol
       const token = generateToken({
         id: user.id,
         email: user.email,
