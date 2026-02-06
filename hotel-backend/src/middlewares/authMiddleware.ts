@@ -18,13 +18,15 @@ export type UserRole = "admin" | "receptionist";
 
 /**
  * Here I describe the structure of the decoded JWT payload.
- * This helps me keep strong typing across the app.
+ * I include hotelId so I can enforce multi-tenant isolation on every request.
  */
 export interface AuthUser extends JwtPayload {
   id: number;
+  hotelId: number;
   email: string;
   role: UserRole;
   name?: string;
+  hotelCode?: string;
 }
 
 /**
@@ -80,7 +82,14 @@ export const authMiddleware = (
      * Here I validate that the token contains the minimum required fields.
      * This prevents malformed or tampered tokens from being accepted.
      */
-    if (!decoded || typeof decoded !== "object" || !decoded.role || !decoded.email) {
+    if (
+      !decoded ||
+      typeof decoded !== "object" ||
+      !decoded.role ||
+      !decoded.email ||
+      !decoded.id ||
+      !decoded.hotelId
+    ) {
       return res.status(401).json({
         success: false,
         code: "AUTH_TOKEN_INVALID",
@@ -107,9 +116,7 @@ export const authMiddleware = (
       success: false,
       code,
       error:
-        err?.name === "TokenExpiredError"
-          ? "Token expired"
-          : "Invalid token",
+        err?.name === "TokenExpiredError" ? "Token expired" : "Invalid token",
     });
   }
 };

@@ -6,9 +6,6 @@ import { useAuth, type UserRole } from "./AuthContext";
  *
  * Here I conditionally render UI elements
  * based on the authenticated user's role.
- *
- * Unlike route guards, this is used inside pages
- * to hide/show specific components or actions.
  */
 export default function RoleGate({
   allowed,
@@ -19,17 +16,18 @@ export default function RoleGate({
   children: React.ReactNode;
   fallback?: React.ReactNode;
 }) {
-  // Here I get the current user from AuthContext
   const { user } = useAuth();
 
-  /**
-   * Here I hide the content if:
-   * - The user is not logged in
-   * - The user's role is not allowed
-   */
   if (!user) return fallback;
-  if (!allowed.includes(user.role)) return fallback;
 
-  // Here I render the protected UI when access is allowed
+  // Normalize roles to avoid "Admin"/"ADMIN"/"admin " issues
+  const userRole = String((user as any).role ?? "")
+    .trim()
+    .toLowerCase();
+
+  const allowedRoles = allowed.map((r) => String(r).trim().toLowerCase());
+
+  if (!allowedRoles.includes(userRole)) return fallback;
+
   return <>{children}</>;
 }

@@ -1,112 +1,300 @@
-import { Request, Response } from "express";
+import type { Request, Response } from "express";
 import prisma from "../services/prisma";
 import { hashPassword, comparePassword } from "../utils/hash";
 import { generateToken } from "../utils/jwt";
 import { z } from "zod";
 
-// Here I define the validation schema for user registration
-// I use Zod to make sure the incoming data is correct
-const registerSchema = z.object({
+/**
+ * Here I validate the public "create hotel + admin" payload.
+ * This is the entry point for a brand-new hotel tenant.
+ */
+const registerHotelSchema = z.object({
+  hotelName: z.string().min(2).max(80),
+  hotelCode: z
+    .string()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9-]+$/i, "hotelCode must be alphanumeric or hyphen"),
   name: z.string().min(2).max(50),
   email: z.string().email(),
   password: z.string().min(6),
-   // This matches the Prisma enum: "admin" | "receptionist"
-  // If it's not provided, I will use the default later
+});
+
+/**
+ * Here I validate the protected "create employee user" payload.
+ * I keep it simple: admin can create receptionist (or admin if you want).
+ */
+const registerUserSchema = z.object({
+  name: z.string().min(2).max(50),
+  email: z.string().email(),
+  password: z.string().min(6),
   role: z.enum(["admin", "receptionist"]).optional(),
 });
 
-// Here I define the validation schema for login
+/**
+ * Here I validate login.
+ * I require hotelCode to select the tenant.
+ */
 const loginSchema = z.object({
+  hotelCode: z.string().min(2),
   email: z.string().email(),
-  // I only check that a password is provided
   password: z.string(),
 });
 
-// Main authentication controller
 const authController = {
-  async register(req: Request, res: Response) {
+  /**
+   * POST /api/auth/register-hotel
+   * Public endpoint:
+   * - creates a Hotel
+   * - creates the first Admin user inside that hotel
+   * - creates a default RoomType so rooms can be created right away
+   * - returns token + user + hotel
+   */
+  async registerHotel(req: Request, res: Response) {
     try {
-      const parsed = registerSchema.safeParse(req.body);
+      const parsed = registerHotelSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({
-          error: "Datos inválidos",
+          success: false,
+          error: "Invalid data",
           details: parsed.error.flatten().fieldErrors,
+        });
+      }
+
+      const { hotelName, hotelCode, name, email, password } = parsed.data;
+
+      // Here I prevent duplicate hotel codes (tenant identifiers)
+      const existingHotel = await prisma.hotel.findUnique({
+        where: { code: hotelCode },
+        select: { id: true },
+      });
+
+      if (existingHotel) {
+        return res.status(409).json({
+          success: false,
+          code: "HOTEL_CODE_TAKEN",
+          error: "Hotel code is already in use",
+        });
+      }
+
+      // Here I hash the password before saving it
+      const hashed = await hashPassword(password);
+
+      /**
+       * Here I create hotel + admin + a default room type in a single transaction,
+       * so I never end up with a hotel that can't create rooms.
+       */
+      const created = await prisma.$transaction(async (tx) => {
+        const hotel = await tx.hotel.create({
+          data: { name: hotelName, code: hotelCode },
+        });
+
+        const user = await tx.user.create({
+          data: {
+            hotelId: hotel.id,
+            name,
+            email,
+            password: hashed,
+            role: "admin",
+          },
+          select: { id: true, name: true, email: true, role: true, hotelId: true },
+        });
+
+        // ✅ IMPORTANT: create at least 1 room type per hotel
+        await tx.roomType.create({
+          data: {
+            hotelId: hotel.id,
+            name: "Standard",
+            basePrice: 1000,
+            capacity: 2,
+          },
+        });
+
+        return { hotel, user };
+      });
+
+      // Here I embed hotelId in the token so I can scope every request to the tenant
+      const token = generateToken({
+        id: created.user.id,
+        hotelId: created.user.hotelId,
+        email: created.user.email,
+        role: created.user.role,
+        name: created.user.name,
+        hotelCode: created.hotel.code,
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "Hotel and admin created",
+        token,
+        hotel: created.hotel,
+        user: created.user,
+      });
+    } catch (error) {
+      console.error("Error in registerHotel:", error);
+      return res.status(500).json({
+        success: false,
+        error: "Internal server error",
+      });
+    }
+  },
+
+  /**
+   * POST /api/auth/register
+   * Protected endpoint (admin only in routes):
+   * - creates a user inside the same hotel as the admin
+   */
+  async register(req: Request, res: Response) {
+    try {
+      const parsed = registerUserSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid data",
+          details: parsed.error.flatten().fieldErrors,
+        });
+      }
+
+      const admin = (req as any).user as { hotelId?: number };
+      const hotelId = admin?.hotelId;
+
+      if (!hotelId) {
+        return res.status(401).json({
+          success: false,
+          error: "Missing or invalid token",
         });
       }
 
       const { name, email, password, role } = parsed.data;
 
-      const existing = await prisma.user.findUnique({ where: { email } });
+      // Here I enforce unique email per hotel
+      const existing = await prisma.user.findFirst({
+        where: { hotelId, email },
+        select: { id: true },
+      });
+
       if (existing) {
-        return res.status(400).json({ error: "El email ya está registrado" });
+        return res.status(409).json({
+          success: false,
+          code: "EMAIL_TAKEN",
+          error: "Email is already in use for this hotel",
+        });
       }
 
       const hashed = await hashPassword(password);
 
       const user = await prisma.user.create({
         data: {
+          hotelId,
           name,
           email,
           password: hashed,
-          
           role: role ?? "receptionist",
         },
-        select: { id: true, name: true, email: true, role: true },
+        select: { id: true, name: true, email: true, role: true, hotelId: true },
       });
 
       return res.status(201).json({
-        message: "Usuario creado correctamente",
+        success: true,
+        message: "User created",
         user,
       });
     } catch (error) {
-      console.error("Error en auth.register:", error);
-      return res.status(500).json({ error: "Error interno del servidor" });
+      console.error("Error in register:", error);
+      return res.status(500).json({
+        success: false,
+        error: "Internal server error",
+      });
     }
   },
 
+  /**
+   * POST /api/auth/login
+   * Public endpoint:
+   * - finds hotel by code
+   * - finds user by (hotelId + email)
+   * - validates password
+   * - returns token + user
+   */
   async login(req: Request, res: Response) {
     try {
       const parsed = loginSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({
-          error: "Datos inválidos",
+          success: false,
+          error: "Invalid data",
           details: parsed.error.flatten().fieldErrors,
         });
       }
 
-      const { email, password } = parsed.data;
+      const { hotelCode, email, password } = parsed.data;
 
-      const user = await prisma.user.findUnique({ where: { email } });
+      const hotel = await prisma.hotel.findUnique({
+        where: { code: hotelCode },
+        select: { id: true, code: true, name: true },
+      });
+
+      if (!hotel) {
+        return res.status(401).json({
+          success: false,
+          code: "HOTEL_NOT_FOUND",
+          error: "Invalid hotel code",
+        });
+      }
+
+      const user = await prisma.user.findFirst({
+        where: { hotelId: hotel.id, email },
+      });
 
       if (!user) {
-        return res.status(404).json({ error: "Usuario no encontrado" });
+        return res.status(401).json({
+          success: false,
+          code: "INVALID_CREDENTIALS",
+          error: "Invalid credentials",
+        });
       }
 
-      const valid = await comparePassword(password, user.password);
-      if (!valid) {
-        return res.status(401).json({ error: "Contraseña incorrecta" });
+      const ok = await comparePassword(password, user.password);
+      if (!ok) {
+        return res.status(401).json({
+          success: false,
+          code: "INVALID_CREDENTIALS",
+          error: "Invalid credentials",
+        });
       }
 
-      // I use helper generateToken to include rol
       const token = generateToken({
         id: user.id,
+        hotelId: user.hotelId,
         email: user.email,
-        role: user.role, // "admin" | "receptionist"
+        role: user.role,
+        name: user.name,
+        hotelCode: hotel.code,
       });
 
       return res.status(200).json({
-        message: "Login exitoso",
+        success: true,
+        message: "Login successful",
         token,
         user: {
           id: user.id,
+          hotelId: user.hotelId,
           name: user.name,
           email: user.email,
           role: user.role,
         },
+        hotel: {
+          id: hotel.id,
+          code: hotel.code,
+          name: hotel.name,
+        },
       });
     } catch (error) {
-      console.error("Error en auth.login:", error);
-      return res.status(500).json({ error: "Error al iniciar sesión" });
+      console.error("Error in login:", error);
+      return res.status(500).json({
+        success: false,
+        error: "Internal server error",
+      });
     }
   },
 };

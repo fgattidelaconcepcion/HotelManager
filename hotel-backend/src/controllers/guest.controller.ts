@@ -1,10 +1,11 @@
-import { Request, Response } from "express";
+import type { Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import type { AuthRequest } from "../middlewares/authMiddleware";
 
 /**
- * Here I use a helper schema to accept optional text fields and convert "" into null,
+ * Here I accept optional text fields and convert "" into null,
  * so my database stays consistent (I prefer null over empty strings).
  */
 const nullableText = z.string().optional().or(z.literal("").transform(() => null));
@@ -26,7 +27,7 @@ const updateGuestSchema = guestSchema.partial();
 
 /**
  * Here I build a safe "contains" filter for nullable fields:
- * I ensure the field is not null before applying contains() to avoid unexpected issues.
+ * I ensure the field is not null before applying contains().
  */
 const nullableContains = (
   field: "email" | "phone" | "documentNumber" | "address",
@@ -39,13 +40,21 @@ const nullableContains = (
 });
 
 /* ============================================================
-   GET /api/guests (list + search)
+   GET /api/guests (list + search)   MULTI-HOTEL SAFE
    ============================================================ */
-export const getAllGuests = async (req: Request, res: Response) => {
+export const getAllGuests = async (req: AuthRequest, res: Response) => {
   try {
+    // Here I enforce tenant isolation: every query must be scoped by hotelId
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     // Here I optionally apply a search filter across multiple fields
     const searchRaw = req.query.search;
-    const where: Prisma.GuestWhereInput = {};
+
+    // Here I start the WHERE already scoped to the current hotel
+    const where: Prisma.GuestWhereInput = { hotelId };
 
     if (typeof searchRaw === "string") {
       const q = searchRaw.trim();
@@ -60,10 +69,7 @@ export const getAllGuests = async (req: Request, res: Response) => {
       }
     }
 
-    /**
-     * Here I explicitly select fields to avoid Prisma reading columns that may not exist yet
-     * in a production database (this helps prevent P2022 issues).
-     */
+    // Here I select explicit fields to keep the response stable
     const guests = await prisma.guest.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -87,19 +93,23 @@ export const getAllGuests = async (req: Request, res: Response) => {
 };
 
 /* ============================================================
-   GET /api/guests/:id
+   GET /api/guests/:id   MULTI-HOTEL SAFE
    ============================================================ */
-export const getGuestById = async (req: Request, res: Response) => {
+export const getGuestById = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate and parse the ID param
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
       return res.status(400).json({ success: false, error: "Invalid ID" });
     }
 
-    // Here I fetch a guest safely using explicit select
-    const guest = await prisma.guest.findUnique({
-      where: { id },
+    // Here I query with (id + hotelId) to prevent cross-hotel access
+    const guest = await prisma.guest.findFirst({
+      where: { id, hotelId },
       select: {
         id: true,
         name: true,
@@ -124,11 +134,15 @@ export const getGuestById = async (req: Request, res: Response) => {
 };
 
 /* ============================================================
-   POST /api/guests (create)
+   POST /api/guests (create)  MULTI-HOTEL SAFE
    ============================================================ */
-export const createGuest = async (req: Request, res: Response) => {
+export const createGuest = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate input before creating the guest
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const parsed = guestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -138,18 +152,27 @@ export const createGuest = async (req: Request, res: Response) => {
       });
     }
 
-    // Here I create the guest with the validated payload
-    const newGuest = await prisma.guest.create({ data: parsed.data });
+    /**
+     * Here I create the guest inside the current hotel.
+     * I never trust hotelId coming from the client.
+     */
+    const newGuest = await prisma.guest.create({
+      data: {
+        hotelId,
+        ...parsed.data,
+      },
+    });
 
     return res.status(201).json({ success: true, data: newGuest });
   } catch (error: any) {
     console.error("Error in createGuest:", error);
 
-    // Here I handle unique constraint violations (e.g. email already exists)
-    if (error?.code === "P2002") {
-      return res.status(400).json({
+    // Here I handle unique constraint violations (email unique per hotel)
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({
         success: false,
-        error: "A guest with this email already exists.",
+        code: "EMAIL_TAKEN",
+        error: "A guest with this email already exists in this hotel.",
       });
     }
 
@@ -158,17 +181,20 @@ export const createGuest = async (req: Request, res: Response) => {
 };
 
 /* ============================================================
-   PUT /api/guests/:id (update)
+   PUT /api/guests/:id (update)   MULTI-HOTEL SAFE
    ============================================================ */
-export const updateGuest = async (req: Request, res: Response) => {
+export const updateGuest = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate and parse the ID param
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
       return res.status(400).json({ success: false, error: "Invalid ID" });
     }
 
-    // Here I validate the update payload (partial schema)
     const parsed = updateGuestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -178,7 +204,16 @@ export const updateGuest = async (req: Request, res: Response) => {
       });
     }
 
-    // Here I update the guest with the validated fields only
+    // Here I ensure the guest belongs to my hotel before updating
+    const existing = await prisma.guest.findFirst({
+      where: { id, hotelId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "Guest not found" });
+    }
+
     const updated = await prisma.guest.update({
       where: { id },
       data: parsed.data,
@@ -188,16 +223,11 @@ export const updateGuest = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Error in updateGuest:", error);
 
-    // Here I handle "not found" updates
-    if (error?.code === "P2025") {
-      return res.status(404).json({ success: false, error: "Guest not found" });
-    }
-
-    // Here I handle unique constraint violations (email already exists)
-    if (error?.code === "P2002") {
-      return res.status(400).json({
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({
         success: false,
-        error: "A guest with this email already exists.",
+        code: "EMAIL_TAKEN",
+        error: "A guest with this email already exists in this hotel.",
       });
     }
 
@@ -206,28 +236,35 @@ export const updateGuest = async (req: Request, res: Response) => {
 };
 
 /* ============================================================
-   DELETE /api/guests/:id
+   DELETE /api/guests/:id   MULTI-HOTEL SAFE
    ============================================================ */
-export const deleteGuest = async (req: Request, res: Response) => {
+export const deleteGuest = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate and parse the ID param
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
       return res.status(400).json({ success: false, error: "Invalid ID" });
     }
 
-    // Here I delete the guest by ID
+    // Here I ensure the guest belongs to my hotel before deleting
+    const existing = await prisma.guest.findFirst({
+      where: { id, hotelId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "Guest not found" });
+    }
+
     await prisma.guest.delete({ where: { id } });
 
     return res.json({ success: true, message: "Guest deleted successfully" });
   } catch (error: any) {
     console.error("Error in deleteGuest:", error);
-
-    // Here I handle "not found" deletes
-    if (error?.code === "P2025") {
-      return res.status(404).json({ success: false, error: "Guest not found" });
-    }
-
     return res.status(500).json({ success: false, error: "Error deleting guest" });
   }
 };

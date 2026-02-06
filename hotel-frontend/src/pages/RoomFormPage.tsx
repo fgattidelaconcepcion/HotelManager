@@ -61,7 +61,7 @@ export default function RoomFormPage() {
   );
 
   const loadRoomTypes = async () => {
-    
+    // Here I only load room types if user is admin (UI shows selector only for admin)
     if (!isAdmin) return;
 
     try {
@@ -69,8 +69,9 @@ export default function RoomFormPage() {
       const res = await api.get("/room-types");
       const data = res.data?.data ?? res.data;
       setRoomTypes(Array.isArray(data) ? data : []);
-    } catch {
-      toast.error("Could not load room types");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || "Could not load room types");
+      setRoomTypes([]);
     } finally {
       setLoadingRoomTypes(false);
     }
@@ -143,9 +144,9 @@ export default function RoomFormPage() {
       return false;
     }
 
-    // roomTypeId only admin
-    if (form.roomTypeId && !isAdmin) {
-      toast.error("Only admin can change the room type.");
+    // Here I enforce roomType for admin (recommended, because backend requires it)
+    if (isAdmin && !form.roomTypeId) {
+      toast.error("Room type is required");
       return false;
     }
 
@@ -164,8 +165,8 @@ export default function RoomFormPage() {
 
     if (form.description.trim()) payload.description = form.description.trim();
 
-    //  only admin can send roomTypeId
-    if (isAdmin && form.roomTypeId) payload.roomTypeId = Number(form.roomTypeId);
+    // Here I send roomTypeId only for admin (backend also validates hotel ownership)
+    if (isAdmin) payload.roomTypeId = Number(form.roomTypeId);
 
     try {
       setLoading(true);
@@ -211,9 +212,7 @@ export default function RoomFormPage() {
             <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
-              <p className="text-xs text-slate-500">
-                Fields marked with * are required.
-              </p>
+              <p className="text-xs text-slate-500">Fields marked with * are required.</p>
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
@@ -246,14 +245,10 @@ export default function RoomFormPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Status *
-                </label>
+                <label className="block text-sm font-medium text-gray-700">Status *</label>
                 <select
                   value={form.status}
-                  onChange={(e) =>
-                    handleChange("status", e.target.value as RoomStatus)
-                  }
+                  onChange={(e) => handleChange("status", e.target.value as RoomStatus)}
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   disabled={loading}
                 >
@@ -261,17 +256,29 @@ export default function RoomFormPage() {
                   <option value="ocupado">Occupied</option>
                   <option value="mantenimiento">Maintenance</option>
                 </select>
-                <p className="text-xs text-slate-500 mt-1">
-                  Tip: use “Maintenance” to hide the room from booking availability.
-                </p>
               </div>
 
-              {/*  Room Type only ADMIN */}
+              {/* Room Type only ADMIN */}
               <RoleGate allowed={["admin"]}>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Room type
-                  </label>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Room type *
+                    </label>
+
+                    {/* Here I show a shortcut if the hotel has no room types */}
+                    {!loadingRoomTypes && roomTypes.length === 0 ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => navigate("/admin/room-types")}
+                        disabled={loading}
+                      >
+                        Create room types
+                      </Button>
+                    ) : null}
+                  </div>
+
                   <select
                     value={form.roomTypeId}
                     onChange={(e) => handleChange("roomTypeId", e.target.value)}
@@ -281,8 +288,11 @@ export default function RoomFormPage() {
                     <option value="">
                       {loadingRoomTypes
                         ? "Loading room types..."
-                        : "Select a type (optional)"}
+                        : roomTypes.length === 0
+                        ? "No room types yet"
+                        : "Select a type"}
                     </option>
+
                     {roomTypes.map((rt) => (
                       <option key={rt.id} value={rt.id}>
                         {rt.name}
@@ -291,16 +301,14 @@ export default function RoomFormPage() {
                     ))}
                   </select>
 
-                  <p className="text-xs text-slate-500 mt-1">
-                    Admin only: affects pricing and reporting.
+                  <p className="text-xs text-slate-500">
+                    Admin only: room types are scoped per hotel (they don’t affect other hotels).
                   </p>
                 </div>
               </RoleGate>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Description
-                </label>
+                <label className="block text-sm font-medium text-gray-700">Description</label>
                 <textarea
                   value={form.description}
                   onChange={(e) => handleChange("description", e.target.value)}

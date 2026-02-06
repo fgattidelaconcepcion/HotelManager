@@ -1,7 +1,8 @@
-import { Request, Response } from "express";
+import type { Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
 import { Prisma, BookingStatus, RoomStatus } from "@prisma/client";
+import type { AuthRequest } from "../middlewares/authMiddleware";
 
 /**
  * Parse "YYYY-MM-DD" as UTC noon to avoid timezone shifting issues.
@@ -69,14 +70,20 @@ function calculateNights(checkIn: Date, checkOut: Date): number {
   return Math.ceil(diffDays);
 }
 
+/**
+ * Here I enforce multi-tenant isolation even when checking overlaps:
+ * I only consider bookings belonging to the same hotelId.
+ */
 async function ensureRoomAvailable(
   tx: Prisma.TransactionClient,
+  hotelId: number,
   roomId: number,
   checkIn: Date,
   checkOut: Date,
   excludeBookingId?: number
 ) {
   const where: Prisma.BookingWhereInput = {
+    hotelId,
     roomId,
     status: { not: "cancelled" },
     checkIn: { lt: checkOut },
@@ -117,14 +124,24 @@ const userSelect = {
 };
 
 /* ============================
-   CONTROLLERS
+   CONTROLLERS (MULTI-HOTEL SAFE)
 ============================ */
 
-// GET /api/bookings
-export const getAllBookings = async (req: Request, res: Response) => {
+/**
+ * GET /api/bookings
+ * Here I scope everything by req.user.hotelId so hotels never see each other's bookings.
+ */
+export const getAllBookings = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const { status, roomId, guestId, from, to } = req.query;
-    const where: Prisma.BookingWhereInput = {};
+
+    // Here I start the query already scoped to the current hotel
+    const where: Prisma.BookingWhereInput = { hotelId };
 
     if (status && Object.values(BookingStatus).includes(status as BookingStatus)) {
       where.status = status as BookingStatus;
@@ -150,19 +167,27 @@ export const getAllBookings = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: bookings });
   } catch (error) {
-    console.error("Error en getAllBookings:", error);
+    console.error("Error in getAllBookings:", error);
     return res.status(500).json({ success: false, error: "Error fetching bookings" });
   }
 };
 
-// GET /api/bookings/:id
-export const getBookingById = async (req: Request, res: Response) => {
+/**
+ * GET /api/bookings/:id
+ * Here I enforce tenant isolation by querying with (id + hotelId).
+ */
+export const getBookingById = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
 
-    const booking = await prisma.booking.findUnique({
-      where: { id },
+    const booking = await prisma.booking.findFirst({
+      where: { id, hotelId },
       include: {
         room: { include: { roomType: true } },
         guest: { select: guestSelect },
@@ -174,14 +199,22 @@ export const getBookingById = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: booking });
   } catch (error) {
-    console.error("Error en getBookingById:", error);
+    console.error("Error in getBookingById:", error);
     return res.status(500).json({ success: false, error: "Error fetching booking" });
   }
 };
 
-// POST /api/bookings
-export const createBooking = async (req: Request, res: Response) => {
+/**
+ * POST /api/bookings
+ * Here I create a booking inside the authenticated user's hotel.
+ */
+export const createBooking = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const parsed = createBookingSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -202,8 +235,12 @@ export const createBooking = async (req: Request, res: Response) => {
       });
     }
 
-    const room = await prisma.room.findUnique({
-      where: { id: data.roomId },
+    /**
+     * Here I ensure the room belongs to the same hotel.
+     * This prevents booking a room from another tenant.
+     */
+    const room = await prisma.room.findFirst({
+      where: { id: data.roomId, hotelId },
       include: { roomType: true },
     });
 
@@ -228,7 +265,7 @@ export const createBooking = async (req: Request, res: Response) => {
     }
 
     const booking = await prisma.$transaction(async (tx) => {
-      const available = await ensureRoomAvailable(tx, data.roomId, data.checkIn, data.checkOut);
+      const available = await ensureRoomAvailable(tx, hotelId, data.roomId, data.checkIn, data.checkOut);
       if (!available) {
         const err: any = new Error("ROOM_NOT_AVAILABLE");
         err.code = "ROOM_NOT_AVAILABLE";
@@ -240,6 +277,7 @@ export const createBooking = async (req: Request, res: Response) => {
 
       return tx.booking.create({
         data: {
+          hotelId,
           roomId: data.roomId,
           userId: data.userId,
           guestId: data.guestId,
@@ -258,7 +296,7 @@ export const createBooking = async (req: Request, res: Response) => {
 
     return res.status(201).json({ success: true, data: booking });
   } catch (error: any) {
-    console.error("Error en createBooking:", error);
+    console.error("Error in createBooking:", error);
 
     if (error?.code === "ROOM_NOT_AVAILABLE" || error?.message === "ROOM_NOT_AVAILABLE") {
       return res.status(409).json({
@@ -272,9 +310,17 @@ export const createBooking = async (req: Request, res: Response) => {
   }
 };
 
-// PUT /api/bookings/:id
-export const updateBooking = async (req: Request, res: Response) => {
+/**
+ * PUT /api/bookings/:id
+ * Here I only allow edits inside the same hotel.
+ */
+export const updateBooking = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
 
@@ -288,14 +334,14 @@ export const updateBooking = async (req: Request, res: Response) => {
       });
     }
 
-    const existing = await prisma.booking.findUnique({
-      where: { id },
+    const existing = await prisma.booking.findFirst({
+      where: { id, hotelId },
       include: { room: { include: { roomType: true } } },
     });
 
     if (!existing) return res.status(404).json({ success: false, error: "Booking not found" });
 
-    
+    // Here I block edits for finalized bookings
     if (["checked_in", "checked_out", "cancelled"].includes(existing.status)) {
       return res.status(400).json({
         success: false,
@@ -318,8 +364,9 @@ export const updateBooking = async (req: Request, res: Response) => {
       });
     }
 
-    const room = await prisma.room.findUnique({
-      where: { id: nextRoomId },
+    // Here I ensure the new room is also inside the same hotel
+    const room = await prisma.room.findFirst({
+      where: { id: nextRoomId, hotelId },
       include: { roomType: true },
     });
 
@@ -344,7 +391,7 @@ export const updateBooking = async (req: Request, res: Response) => {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const available = await ensureRoomAvailable(tx, nextRoomId, nextCheckIn, nextCheckOut, id);
+      const available = await ensureRoomAvailable(tx, hotelId, nextRoomId, nextCheckIn, nextCheckOut, id);
       if (!available) {
         const err: any = new Error("ROOM_NOT_AVAILABLE");
         err.code = "ROOM_NOT_AVAILABLE";
@@ -374,7 +421,7 @@ export const updateBooking = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: updated });
   } catch (error: any) {
-    console.error("Error en updateBooking:", error);
+    console.error("Error in updateBooking:", error);
 
     if (error?.code === "ROOM_NOT_AVAILABLE" || error?.message === "ROOM_NOT_AVAILABLE") {
       return res.status(409).json({
@@ -388,9 +435,17 @@ export const updateBooking = async (req: Request, res: Response) => {
   }
 };
 
-// PATCH /api/bookings/:id/status
-export const updateBookingStatus = async (req: Request, res: Response) => {
+/**
+ * PATCH /api/bookings/:id/status
+ * Here I enforce tenant isolation and update room status safely.
+ */
+export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
 
@@ -402,7 +457,11 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
     const next = parsed.data.status;
 
     const updated = await prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.findUnique({ where: { id }, include: { room: true } });
+      const booking = await tx.booking.findFirst({
+        where: { id, hotelId },
+        include: { room: true },
+      });
+
       if (!booking) {
         const err: any = new Error("BOOKING_NOT_FOUND");
         err.code = "BOOKING_NOT_FOUND";
@@ -434,6 +493,7 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
         },
       });
 
+      // Here I update the room status only inside this hotel
       const roomStatus = getRoomStatusForBookingTransition(next);
       if (roomStatus && booking.roomId) {
         if (!(roomStatus === RoomStatus.disponible && booking.room?.status === RoomStatus.mantenimiento)) {
@@ -446,7 +506,7 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: updated });
   } catch (error: any) {
-    console.error("Error en updateBookingStatus:", error);
+    console.error("Error in updateBookingStatus:", error);
 
     if (error?.code === "BOOKING_NOT_FOUND" || error?.message === "BOOKING_NOT_FOUND") {
       return res.status(404).json({ success: false, error: "Booking not found" });
@@ -466,21 +526,34 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
   }
 };
 
-// DELETE /api/bookings/:id
-export const deleteBooking = async (req: Request, res: Response) => {
+/**
+ * DELETE /api/bookings/:id
+ * Here I only allow deletion inside the same hotel.
+ */
+export const deleteBooking = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
+
+    // Here I enforce tenant isolation: I must own the booking
+    const booking = await prisma.booking.findFirst({
+      where: { id, hotelId },
+      select: { id: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, error: "Booking not found" });
+    }
 
     await prisma.booking.delete({ where: { id } });
     return res.status(200).json({ success: true, message: "Booking deleted successfully" });
   } catch (error: any) {
-    console.error("Error en deleteBooking:", error);
-
-    if (error?.code === "P2025") {
-      return res.status(404).json({ success: false, error: "Booking not found" });
-    }
-
+    console.error("Error in deleteBooking:", error);
     return res.status(500).json({ success: false, error: "Error deleting booking" });
   }
 };

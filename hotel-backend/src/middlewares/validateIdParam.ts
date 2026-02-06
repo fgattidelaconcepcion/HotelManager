@@ -14,15 +14,7 @@ export function validateIdParam(paramName: string) {
     // Here I convert it to a number
     const id = Number(raw);
 
-    /**
-     * Here I validate that:
-     * - The param exists
-     * - It is a valid number
-     * - It is an integer
-     * - It is greater than zero
-     *
-     * This prevents invalid IDs from reaching the database layer.
-     */
+    // Here I block invalid ids early to protect the database layer
     if (!raw || Number.isNaN(id) || !Number.isInteger(id) || id <= 0) {
       return res.status(400).json({
         success: false,
@@ -31,6 +23,6 @@ export function validateIdParam(paramName: string) {
     }
 
     // Here I allow the request to continue if validation passes
-    next();
+    return next();
   };
 }

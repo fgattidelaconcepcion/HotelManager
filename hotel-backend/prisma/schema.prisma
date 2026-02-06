@@ -27,8 +27,8 @@ enum BookingStatus {
 }
 
 /**
- * ✅ NUEVO: Estado de Habitación tipado (producto real)
- * Mantengo valores en español para no romper el front hoy.
+ * Here I keep RoomStatus in Spanish because my frontend is already using these values.
+ * I can refactor to English later, but I don't want to break existing UI today.
  */
 enum RoomStatus {
   disponible
@@ -38,64 +38,97 @@ enum RoomStatus {
 
 /**
  * ============================
- * MODELO USER
+ * MULTI-HOTEL (TENANT) MODEL
  * ============================
+ *
+ * Here I introduce the Hotel model to support multi-tenant data isolation.
+ * Every domain entity will point to exactly one Hotel via hotelId.
  */
-
-model User {
+model Hotel {
   id        Int      @id @default(autoincrement())
   name      String
-  email     String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now())
+
+  users     User[]
+  roomTypes RoomType[]
+  rooms     Room[]
+  guests    Guest[]
+  bookings  Booking[]
+}
+
+/**
+ * ============================
+ * USER
+ * ============================
+ */
+model User {
+  id        Int      @id @default(autoincrement())
+  hotelId   Int
+  name      String
+  email     String
   password  String
   role      UserRole @default(receptionist)
   createdAt DateTime @default(now())
 
+  hotel    Hotel    @relation(fields: [hotelId], references: [id])
   bookings Booking[]
+
+  // Here I make email unique per hotel (not globally).
+  @@unique([hotelId, email])
 }
 
 /**
  * ============================
- * MODELO ROOM TYPE
+ * ROOM TYPE
  * ============================
  */
-
 model RoomType {
   id        Int    @id @default(autoincrement())
-  name      String @unique
+  hotelId   Int
+  name      String
   basePrice Float
   capacity  Int
 
+  hotel Hotel @relation(fields: [hotelId], references: [id])
   rooms Room[]
+
+  // Here I make the room type name unique per hotel.
+  @@unique([hotelId, name])
 }
 
 /**
  * ============================
- * MODELO ROOM
+ * ROOM
  * ============================
  */
-
 model Room {
   id          Int        @id @default(autoincrement())
-  number      String     @unique
+  hotelId     Int
+  number      String
   floor       Int
   status      RoomStatus @default(disponible)
   description String?
   roomTypeId  Int
 
+  hotel    Hotel     @relation(fields: [hotelId], references: [id])
   roomType RoomType  @relation(fields: [roomTypeId], references: [id])
   bookings Booking[]
+
+  // Here I make room numbers unique per hotel.
+  @@unique([hotelId, number])
 }
 
 /**
  * ============================
- * MODELO GUEST
+ * GUEST
  * ============================
  */
-
 model Guest {
   id             Int      @id @default(autoincrement())
+  hotelId        Int
   name           String
-  email          String?  @unique
+  email          String?
   phone          String?
 
   documentNumber String?  @map("documentnumber")
@@ -104,17 +137,21 @@ model Guest {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  hotel    Hotel    @relation(fields: [hotelId], references: [id])
   bookings Booking[]
+
+  // Here I make guest email unique per hotel (nullable unique works in SQLite).
+  @@unique([hotelId, email])
 }
 
 /**
  * ============================
- * MODELO BOOKING
+ * BOOKING
  * ============================
  */
-
 model Booking {
   id         Int           @id @default(autoincrement())
+  hotelId    Int
   userId     Int?
   guestId    Int?
   roomId     Int
@@ -125,6 +162,7 @@ model Booking {
   status    BookingStatus @default(pending)
   createdAt DateTime      @default(now())
 
+  hotel    Hotel     @relation(fields: [hotelId], references: [id])
   room     Room      @relation(fields: [roomId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])
   guest    Guest?    @relation(fields: [guestId], references: [id])
@@ -133,10 +171,9 @@ model Booking {
 
 /**
  * ============================
- * MODELO PAYMENT
+ * PAYMENT
  * ============================
  */
-
 model Payment {
   id        Int      @id @default(autoincrement())
   booking   Booking  @relation(fields: [bookingId], references: [id])

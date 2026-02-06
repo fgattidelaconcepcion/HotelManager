@@ -18,122 +18,67 @@ export type UserRole = "admin" | "receptionist";
  */
 export interface AuthUser {
   id: number;
+  hotelId: number;
   name: string;
   email: string;
   role: UserRole;
 }
 
-/**
- * Internal auth state structure.
- */
-interface AuthState {
+interface AuthContextValue {
   token: string | null;
   user: AuthUser | null;
-}
-
-/**
- * Public context API exposed to the app.
- */
-interface AuthContextValue extends AuthState {
   isAuthenticated: boolean;
-  login: (payload: { token: string; user: AuthUser }) => void;
+  login: (token: string, user: AuthUser) => void;
   logout: () => void;
 }
 
-/**
- * Here I create the authentication context.
- * It will be shared across the entire application.
- */
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-// Keys used for persistence in localStorage
-const STORAGE_TOKEN = "token";
-const STORAGE_USER = "user";
-
-/**
- * AuthProvider component.
- *
- * Here I centralize authentication state and logic
- * and make it available to all child components.
- */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  /**
-   * Here I initialize the token from localStorage (if present),
-   * so sessions survive page reloads.
-   */
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem(STORAGE_TOKEN)
-  );
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
 
-  /**
-   * Here I initialize the user from localStorage (if present).
-   */
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    const raw = localStorage.getItem(STORAGE_USER);
-    return raw ? (JSON.parse(raw) as AuthUser) : null;
-  });
-
-  /**
-   * Here I keep the token synchronized with localStorage.
-   */
+  // Here I load persisted auth state from localStorage (if any)
   useEffect(() => {
-    if (token) localStorage.setItem(STORAGE_TOKEN, token);
-    else localStorage.removeItem(STORAGE_TOKEN);
-  }, [token]);
+    const savedToken = localStorage.getItem("token");
+    const savedUser = localStorage.getItem("user");
 
-  /**
-   * Here I keep the user object synchronized with localStorage.
-   */
-  useEffect(() => {
-    if (user) localStorage.setItem(STORAGE_USER, JSON.stringify(user));
-    else localStorage.removeItem(STORAGE_USER);
-  }, [user]);
+    if (savedToken) setToken(savedToken);
+    if (savedUser) setUser(JSON.parse(savedUser));
+  }, []);
 
-  /**
-   * Here I memoize the context value to avoid unnecessary re-renders.
-   */
+  // Here I compute derived auth state
+  const isAuthenticated = useMemo(() => Boolean(token && user), [token, user]);
+
   const value = useMemo<AuthContextValue>(() => {
     return {
       token,
       user,
+      isAuthenticated,
 
-      // Here I consider the user authenticated only if both token and user exist
-      isAuthenticated: !!token && !!user,
-
-      /**
-       * Here I store credentials after a successful login.
-       */
-      login: ({ token, user }) => {
-        setToken(token);
-        setUser(user);
+      login: (newToken, newUser) => {
+        // Here I persist auth state so refresh keeps the session
+        setToken(newToken);
+        setUser(newUser);
+        localStorage.setItem("token", newToken);
+        localStorage.setItem("user", JSON.stringify(newUser));
       },
 
-      /**
-       * Here I clear all auth data on logout.
-       */
       logout: () => {
+        // Here I clear auth state and storage
         setToken(null);
         setUser(null);
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
       },
     };
-  }, [token, user]);
+  }, [token, user, isAuthenticated]);
 
-  // Here I expose the auth context to the whole app
-  return (
-    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-/**
- * Custom hook to consume the AuthContext safely.
- */
 export function useAuth() {
   const ctx = useContext(AuthContext);
-
-  // Here I enforce that useAuth is used only inside AuthProvider
-  if (!ctx) {
-    throw new Error("useAuth must be used inside <AuthProvider>");
-  }
-
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

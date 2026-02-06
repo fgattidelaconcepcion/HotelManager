@@ -1,5 +1,5 @@
 import React from "react";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 
 import Home from "./pages/Home";
@@ -13,9 +13,15 @@ import Reservations from "./pages/Reservations";
 import ReservationFormPage from "./pages/ReservationFormPage";
 import Payments from "./pages/Payments";
 
+// ✅ NEW: Room Types UI
+import RoomTypes from "./pages/RoomTypes";
+
+// Here I import the admin employees page
+import Employees from "./pages/admin/Employees";
+
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout/Layout";
-import { AuthProvider } from "./auth/AuthContext";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
 
 function Forbidden() {
   return (
@@ -34,6 +40,16 @@ function Forbidden() {
       </div>
     </div>
   );
+}
+
+/**
+ * Here I protect admin-only pages on the client side.
+ * Backend still enforces role checks, this is just better UX.
+ */
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role !== "admin") return <Navigate to="/forbidden" replace />;
+  return <>{children}</>;
 }
 
 const router = createBrowserRouter([
@@ -55,6 +71,9 @@ const router = createBrowserRouter([
       { path: "rooms/new", element: <RoomFormPage /> },
       { path: "rooms/:id", element: <RoomFormPage /> },
 
+      // ✅ NEW: room types page (view for both roles; create/edit/delete is admin-only inside the page)
+      { path: "room-types", element: <RoomTypes /> },
+
       { path: "guests", element: <Guests /> },
       { path: "guests/new", element: <GuestFormPage /> },
       { path: "guests/:id", element: <GuestFormPage /> },
@@ -63,8 +82,23 @@ const router = createBrowserRouter([
       { path: "reservations/new", element: <ReservationFormPage /> },
       { path: "reservations/:id", element: <ReservationFormPage /> },
 
-      //  Payments both (admin + receptionist)
+      // Payments both (admin + receptionist)
       { path: "payments", element: <Payments /> },
+
+      /**
+       * Here I add the admin employees section.
+       * URL: /admin/employees
+       */
+      {
+        path: "admin/employees",
+        element: (
+          <AdminRoute>
+            <Employees />
+          </AdminRoute>
+        ),
+      },
+
+      { path: "*", element: <Home /> },
     ],
   },
 ]);

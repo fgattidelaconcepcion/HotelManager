@@ -1,6 +1,7 @@
-import { Request, Response } from "express";
+import type { Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
+import type { AuthRequest } from "../middlewares/authMiddleware";
 
 /* =====================================
       LOCAL STATUS (APP LEVEL)
@@ -8,7 +9,7 @@ import { z } from "zod";
 
 /**
  * Here I define the payment statuses used in my app.
- * I keep it local to stay consistent even if Prisma enums change.
+ * I keep it local to stay stable even if Prisma enums change later.
  */
 const paymentStatusEnum = z.enum(["pending", "completed", "failed"]);
 type PaymentStatus = z.infer<typeof paymentStatusEnum>;
@@ -33,25 +34,17 @@ const createPaymentSchema = basePaymentSchema;
 const updatePaymentSchema = basePaymentSchema.partial();
 
 /* =====================================
-      HELPERS (MOST IMPORTANT)
+      HELPERS
 ===================================== */
 
 /**
  * Here I calculate how much was already paid for a booking (ONLY completed payments).
- * I optionally exclude one payment ID, which is key when updating a payment.
+ * I DO NOT filter by hotelId directly because Payment does not have hotelId.
+ * Instead, I validate the booking belongs to the hotel before calling this.
  */
-async function getCompletedPaidForBooking(
-  bookingId: number,
-  excludePaymentId?: number
-) {
-  const where: any = {
-    bookingId,
-    status: "completed",
-  };
-
-  if (excludePaymentId) {
-    where.id = { not: excludePaymentId };
-  }
+async function getCompletedPaidForBooking(bookingId: number, excludePaymentId?: number) {
+  const where: any = { bookingId, status: "completed" };
+  if (excludePaymentId) where.id = { not: excludePaymentId };
 
   const result = await prisma.payment.aggregate({
     where,
@@ -62,21 +55,36 @@ async function getCompletedPaidForBooking(
 }
 
 /* =====================================
-      CONTROLLERS
+      CONTROLLERS (MULTI-HOTEL SAFE)
 ===================================== */
 
 // GET /api/payments
-export const getAllPayments = async (req: Request, res: Response) => {
+export const getAllPayments = async (req: AuthRequest, res: Response) => {
   try {
-    // Optional filters (bookingId/status) from query params
-    const { bookingId, status } = req.query;
-    const where: any = {};
+    // Here I enforce tenant isolation: I need hotelId from JWT
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
 
-    if (bookingId && !isNaN(Number(bookingId))) where.bookingId = Number(bookingId);
+    const { bookingId, status } = req.query;
+
+    /**
+     * Here I scope payments by traversing the relation:
+     * Payment -> Booking -> hotelId
+     */
+    const where: any = {
+      booking: { hotelId },
+    };
+
+    if (bookingId && !isNaN(Number(bookingId))) {
+      // Here I optionally filter by bookingId (still scoped by booking.hotelId)
+      where.bookingId = Number(bookingId);
+    }
 
     if (status && typeof status === "string") {
-      const allowedStatuses: PaymentStatus[] = ["pending", "completed", "failed"];
-      if (allowedStatuses.includes(status as PaymentStatus)) where.status = status;
+      const allowed: PaymentStatus[] = ["pending", "completed", "failed"];
+      if (allowed.includes(status as PaymentStatus)) where.status = status;
     }
 
     const payments = await prisma.payment.findMany({
@@ -94,22 +102,25 @@ export const getAllPayments = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: payments });
   } catch (error) {
-    console.error("Error en getAllPayments:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error fetching payments",
-    });
+    console.error("Error in getAllPayments:", error);
+    return res.status(500).json({ success: false, error: "Error fetching payments" });
   }
 };
 
 // GET /api/payments/:id
-export const getPaymentById = async (req: Request, res: Response) => {
+export const getPaymentById = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid payment ID" });
 
-    const payment = await prisma.payment.findUnique({
-      where: { id },
+    // Here I enforce tenant isolation through booking relation
+    const payment = await prisma.payment.findFirst({
+      where: { id, booking: { hotelId } },
       include: {
         booking: {
           include: {
@@ -124,15 +135,19 @@ export const getPaymentById = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: payment });
   } catch (error) {
-    console.error("Error en getPaymentById:", error);
+    console.error("Error in getPaymentById:", error);
     return res.status(500).json({ success: false, error: "Error fetching payment" });
   }
 };
 
-
 // POST /api/payments
-export const createPayment = async (req: Request, res: Response) => {
+export const createPayment = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const parsed = createPaymentSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -144,18 +159,20 @@ export const createPayment = async (req: Request, res: Response) => {
 
     const data = parsed.data;
 
-    const booking = await prisma.booking.findUnique({
-      where: { id: data.bookingId },
+    // Here I make sure the booking exists AND belongs to this hotel
+    const booking = await prisma.booking.findFirst({
+      where: { id: data.bookingId, hotelId },
+      select: { id: true, totalPrice: true },
     });
 
     if (!booking) {
       return res.status(404).json({
         success: false,
-        error: "Associated booking not found",
+        error: "Associated booking not found in this hotel",
       });
     }
 
-    // Prevent overpayment only when created as "completed"
+    // Here I prevent overpayment only when created as "completed"
     if (data.status === "completed") {
       const alreadyPaid = await getCompletedPaidForBooking(data.bookingId);
       const newTotalPaid = alreadyPaid + data.amount;
@@ -168,6 +185,7 @@ export const createPayment = async (req: Request, res: Response) => {
       }
     }
 
+    // Here I create the payment (Payment does NOT store hotelId; hotel scope comes from booking)
     const payment = await prisma.payment.create({
       data: {
         bookingId: data.bookingId,
@@ -187,14 +205,19 @@ export const createPayment = async (req: Request, res: Response) => {
 
     return res.status(201).json({ success: true, data: payment });
   } catch (error) {
-    console.error("Error en createPayment:", error);
+    console.error("Error in createPayment:", error);
     return res.status(500).json({ success: false, error: "Error creating payment" });
   }
 };
 
 // PUT /api/payments/:id
-export const updatePayment = async (req: Request, res: Response) => {
+export const updatePayment = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (Number.isNaN(id) || id <= 0) {
       return res.status(400).json({ success: false, error: "Invalid payment ID" });
@@ -209,31 +232,25 @@ export const updatePayment = async (req: Request, res: Response) => {
       });
     }
 
-    const existing = await prisma.payment.findUnique({ where: { id } });
-    if (!existing) {
-      return res.status(404).json({ success: false, error: "Payment not found" });
-    }
-
-    const booking = await prisma.booking.findUnique({
-      where: { id: existing.bookingId },
+    // Here I only allow updating a payment that belongs to my hotel (via booking relation)
+    const existing = await prisma.payment.findFirst({
+      where: { id, booking: { hotelId } },
+      include: { booking: { select: { id: true, totalPrice: true } } },
     });
 
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: "Associated booking not found",
-      });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "Payment not found" });
     }
 
     const nextAmount = parsed.data.amount ?? existing.amount;
     const nextStatus = (parsed.data.status ?? existing.status) as PaymentStatus;
 
-    // Prevent overpayment on updates if status is completed
+    // Here I prevent overpayment on updates if status is completed
     if (nextStatus === "completed") {
       const alreadyPaid = await getCompletedPaidForBooking(existing.bookingId, existing.id);
       const newTotalPaid = alreadyPaid + nextAmount;
 
-      if (newTotalPaid > booking.totalPrice) {
+      if (newTotalPaid > existing.booking.totalPrice) {
         return res.status(400).json({
           success: false,
           error: "Completed payments would exceed the booking total. Update not allowed.",
@@ -260,32 +277,39 @@ export const updatePayment = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data: updated });
   } catch (error) {
-    console.error("Error en updatePayment:", error);
+    console.error("Error in updatePayment:", error);
     return res.status(500).json({ success: false, error: "Error updating payment" });
   }
 };
 
 // DELETE /api/payments/:id
-export const deletePayment = async (req: Request, res: Response) => {
+export const deletePayment = async (req: AuthRequest, res: Response) => {
   try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     const id = Number(req.params.id);
     if (Number.isNaN(id) || id <= 0) {
       return res.status(400).json({ success: false, error: "Invalid payment ID" });
     }
 
-    await prisma.payment.delete({ where: { id } });
-
-    return res.status(200).json({
-      success: true,
-      message: "Payment deleted successfully",
+    // Here I enforce tenant isolation: I only delete payments inside my hotel
+    const existing = await prisma.payment.findFirst({
+      where: { id, booking: { hotelId } },
+      select: { id: true },
     });
-  } catch (error: any) {
-    console.error("Error en deletePayment:", error);
 
-    if (error.code === "P2025") {
+    if (!existing) {
       return res.status(404).json({ success: false, error: "Payment not found" });
     }
 
+    await prisma.payment.delete({ where: { id } });
+
+    return res.status(200).json({ success: true, message: "Payment deleted successfully" });
+  } catch (error) {
+    console.error("Error in deletePayment:", error);
     return res.status(500).json({ success: false, error: "Error deleting payment" });
   }
 };

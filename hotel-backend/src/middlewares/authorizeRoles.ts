@@ -21,10 +21,7 @@ export function authorizeRoles(...allowed: UserRole[]) {
       });
     }
 
-    /**
-     * Here I check if the user's role is allowed for this route.
-     * This enforces role-based access control (RBAC).
-     */
+    // Here I enforce RBAC by checking if the user's role is allowed
     if (!allowed.includes(user.role)) {
       return res.status(403).json({
         success: false,

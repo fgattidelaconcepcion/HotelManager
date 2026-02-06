@@ -1,34 +1,51 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { toast } from "sonner";
 import axios from "axios";
-import type { UserRole } from "../auth/AuthContext";
+import type { AuthUser } from "../auth/AuthContext";
+import { useAuth } from "../auth/AuthContext";
+
+/**
+ * Here I define the backend response for "register hotel".
+ */
+type RegisterHotelResponse = {
+  success: boolean;
+  token: string;
+  user: AuthUser;
+  hotel: { id: number; code: string; name: string };
+  message?: string;
+};
 
 export default function Signup() {
+  // Here I store hotel fields
+  const [hotelName, setHotelName] = useState("");
+  const [hotelCode, setHotelCode] = useState("");
+
+  // Here I store admin fields
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
-  // ✅ Solo para DEV/DEMO (controlado por env)
-  const allowRoleSignup = useMemo(() => {
-    return String(import.meta.env.VITE_ALLOW_ROLE_SIGNUP).toLowerCase() === "true";
-  }, []);
-
-  const [role, setRole] = useState<UserRole>("receptionist");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
 
-    if (!name.trim() || !email.trim() || !password.trim()) {
+    if (
+      !hotelName.trim() ||
+      !hotelCode.trim() ||
+      !name.trim() ||
+      !email.trim() ||
+      !password.trim()
+    ) {
       setError("All fields are required.");
       return;
     }
@@ -36,150 +53,124 @@ export default function Signup() {
     setLoading(true);
 
     try {
-      const payload: any = { name, email, password };
+      const res = await api.post<RegisterHotelResponse>(
+        "/auth/register-hotel",
+        {
+          hotelName,
+          hotelCode,
+          name,
+          email,
+          password,
+        },
+        { silentErrorToast: true } as any
+      );
 
-      // ✅ Solo enviamos role si está habilitado
-      if (allowRoleSignup) payload.role = role;
+      const token = res.data?.token;
+      const user = res.data?.user;
 
-      await api.post("/auth/register", payload, { silentErrorToast: true } as any);
+      if (!token || !user) {
+        setError("Register response is missing token/user.");
+        return;
+      }
 
-      toast.success("Account created successfully");
-      navigate("/login");
+      // Here I auto-login after creating the hotel (better UX)
+      login(token, user);
+
+      // Here I remember hotelCode for the next login
+      localStorage.setItem("hotelCode", hotelCode);
+
+      toast.success("Hotel created successfully");
+      navigate("/", { replace: true });
     } catch (err: unknown) {
       const message = axios.isAxiosError(err)
-        ? ((err.response?.data as any)?.error as string) ||
-          ((err.response?.data as any)?.message as string) ||
+        ? (err.response?.data as any)?.error ||
+          (err.response?.data as any)?.message ||
           err.message
-        : err instanceof Error
-        ? err.message
-        : "Could not create account. Please try again.";
+        : "Signup failed";
 
-      setError(message);
-      toast.error(message);
+      setError(String(message));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
-        <div className="flex items-center justify-center mb-6 gap-2">
-          <div className="h-10 w-10 rounded-2xl bg-blue-500 flex items-center justify-center text-white font-bold">
-            HM
-          </div>
-          <div>
-            <p className="text-sm text-slate-200 font-semibold">HotelManager</p>
-            <p className="text-xs text-slate-400">Admin panel</p>
-          </div>
-        </div>
+    <div className="mx-auto max-w-md p-4">
+      <Card>
+        <CardBody>
+          <h1 className="mb-4 text-xl font-semibold">Create your hotel</h1>
 
-        <Card>
-          <CardBody>
-            <h1 className="text-xl font-semibold text-slate-900 mb-1">
-              Create account
-            </h1>
-            <p className="text-sm text-slate-500 mb-4">
-              Fill in your details to register and then sign in.
-            </p>
+          {error ? (
+            <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
 
-            {error && (
-              <div className="mb-4 bg-red-50 text-red-700 text-sm px-3 py-2 rounded">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  placeholder="John Doe"
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  placeholder="example@hotel.com"
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  disabled={loading}
-                  autoComplete="email"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  placeholder="********"
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  disabled={loading}
-                  autoComplete="new-password"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  Minimum 6 characters.
-                </p>
-              </div>
-
-              {/* ✅ Role selector (solo dev/demo) */}
-              {allowRoleSignup && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Role (dev/demo)
-                  </label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as UserRole)}
-                    className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                    disabled={loading}
-                  >
-                    <option value="receptionist">Receptionist</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Only enabled when VITE_ALLOW_ROLE_SIGNUP=true.
-                  </p>
-                </div>
-              )}
-
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Creating account..." : "Sign up"}
-              </Button>
-            </form>
-
-            <p className="mt-4 text-center text-xs text-slate-500">
-              Already have an account?{" "}
-              <button
-                type="button"
-                className="text-blue-600 hover:underline"
-                onClick={() => navigate("/login")}
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Hotel name</label>
+              <input
+                value={hotelName}
+                onChange={(e) => setHotelName(e.target.value)}
+                className="w-full rounded-md border px-3 py-2"
+                placeholder="My Hotel"
                 disabled={loading}
-              >
-                Sign in
-              </button>
-            </p>
-          </CardBody>
-        </Card>
-      </div>
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Hotel code</label>
+              <input
+                value={hotelCode}
+                onChange={(e) => setHotelCode(e.target.value)}
+                className="w-full rounded-md border px-3 py-2"
+                placeholder="my-hotel"
+                disabled={loading}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                I use this code to identify your hotel tenant at login (letters, numbers, hyphen).
+              </p>
+            </div>
+
+            <hr className="my-2" />
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Admin name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full rounded-md border px-3 py-2"
+                disabled={loading}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Admin email</label>
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-md border px-3 py-2"
+                disabled={loading}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-md border px-3 py-2"
+                disabled={loading}
+              />
+            </div>
+
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? "Creating..." : "Create hotel"}
+            </Button>
+          </form>
+        </CardBody>
+      </Card>
     </div>
   );
 }

@@ -1,6 +1,7 @@
-import { Request, Response } from "express";
+import type { Response } from "express";
 import prisma from "../services/prisma";
 import { BookingStatus, RoomStatus } from "@prisma/client";
+import type { AuthRequest } from "../middlewares/authMiddleware";
 
 /**
  * =========================================================
@@ -68,7 +69,7 @@ const LATEST_PAYMENTS_TAKE = 5;
 /**
  * Here I safely parse the dashboard range (?range=7|30). Default is 7 days.
  */
-function parseRangeDays(req: Request) {
+function parseRangeDays(req: AuthRequest) {
   const raw = req.query.range;
   const n = typeof raw === "string" ? Number(raw) : NaN;
   if (n === 30) return 30;
@@ -80,13 +81,25 @@ type SeriesPoint = {
   value: number;
 };
 
-export const getDashboard = async (req: Request, res: Response) => {
+export const getDashboard = async (req: AuthRequest, res: Response) => {
   try {
+    /**
+     * Here I enforce multi-tenant isolation:
+     * every metric must be scoped by req.user.hotelId.
+     */
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
     // Here I decide what timezone offset I’ll use for the whole dashboard
     const tzOffsetMinutes = getTzOffsetMinutes();
 
     // Here I compute "today" in my dashboard timezone (not the server timezone)
-    const { y: todayY, m: todayM, d: todayD } = getLocalDayPartsForOffset(tzOffsetMinutes, new Date());
+    const { y: todayY, m: todayM, d: todayD } = getLocalDayPartsForOffset(
+      tzOffsetMinutes,
+      new Date()
+    );
 
     // Here I compute the UTC window that represents "today" in my dashboard timezone
     const { startUTC: todayStartUTC, endUTC: todayEndUTC } = getDayRangeUTCForOffset(
@@ -99,25 +112,37 @@ export const getDashboard = async (req: Request, res: Response) => {
     // Here I compute the UTC window for charts (last 7 or 30 local days)
     const rangeDays = parseRangeDays(req);
     const startLocal = addDaysUTC(todayY, todayM, todayD, -(rangeDays - 1)); // inclusive start
+
     const { startUTC: rangeStartUTC } = getDayRangeUTCForOffset(
       tzOffsetMinutes,
       startLocal.y,
       startLocal.m,
       startLocal.d
     );
-    const { endUTC: rangeEndUTC } = getDayRangeUTCForOffset(tzOffsetMinutes, todayY, todayM, todayD);
+    const { endUTC: rangeEndUTC } = getDayRangeUTCForOffset(
+      tzOffsetMinutes,
+      todayY,
+      todayM,
+      todayD
+    );
 
     // Here I prebuild local date keys so I can return a stable chart series with no missing days
     const dateKeys: string[] = [];
     for (let i = 0; i < rangeDays; i++) {
       const day = addDaysUTC(startLocal.y, startLocal.m, startLocal.d, i);
-      const key = `${day.y}-${String(day.m + 1).padStart(2, "0")}-${String(day.d).padStart(2, "0")}`;
+      const key = `${day.y}-${String(day.m + 1).padStart(2, "0")}-${String(day.d).padStart(
+        2,
+        "0"
+      )}`;
       dateKeys.push(key);
     }
 
     /**
      * Here I fetch everything in parallel to keep the endpoint fast.
-     * I group: capacity, finance, alerts, today activity, widgets, and chart range data.
+     * IMPORTANT: I always scope by hotelId.
+     *
+     * Note: Payment does NOT have hotelId, so I scope payments via:
+     * Payment -> booking -> hotelId
      */
     const [
       totalRooms,
@@ -133,28 +158,31 @@ export const getDashboard = async (req: Request, res: Response) => {
       completedPaymentsInRange,
       checkedInBookingsInRange,
     ] = await Promise.all([
-      prisma.room.count(),
+      prisma.room.count({
+        where: { hotelId },
+      }),
 
       prisma.room.count({
-        where: { status: RoomStatus.mantenimiento },
+        where: { hotelId, status: RoomStatus.mantenimiento },
       }),
 
       prisma.payment.aggregate({
-        where: { status: "completed" },
+        where: { status: "completed", booking: { hotelId } },
         _sum: { amount: true },
       }),
 
       prisma.booking.count({
-        where: { status: "pending" },
+        where: { hotelId, status: "pending" },
       }),
 
       prisma.payment.count({
-        where: { status: "pending" },
+        where: { status: "pending", booking: { hotelId } },
       }),
 
       // Here I count occupied rooms today using distinct roomId (only checked_in and overlapping today)
       prisma.booking.findMany({
         where: {
+          hotelId,
           status: "checked_in",
           checkIn: { lte: todayEndUTC },
           checkOut: { gte: todayStartUTC },
@@ -166,6 +194,7 @@ export const getDashboard = async (req: Request, res: Response) => {
       // Here I count arrivals today (pending/confirmed with checkIn within today's window)
       prisma.booking.count({
         where: {
+          hotelId,
           status: { in: ["pending", "confirmed"] as BookingStatus[] },
           checkIn: { gte: todayStartUTC, lte: todayEndUTC },
         },
@@ -174,13 +203,15 @@ export const getDashboard = async (req: Request, res: Response) => {
       // Here I count departures today (checked_in/checked_out with checkOut within today's window)
       prisma.booking.count({
         where: {
+          hotelId,
           status: { in: ["checked_in", "checked_out"] as BookingStatus[] },
           checkOut: { gte: todayStartUTC, lte: todayEndUTC },
         },
       }),
 
-      // Here I fetch the latest bookings for a dashboard widget
+      // Here I fetch the latest bookings for a dashboard widget (scoped by hotelId)
       prisma.booking.findMany({
+        where: { hotelId },
         orderBy: { createdAt: "desc" },
         take: LATEST_BOOKINGS_TAKE,
         select: {
@@ -196,9 +227,9 @@ export const getDashboard = async (req: Request, res: Response) => {
         },
       }),
 
-      // Here I fetch the latest completed payments for a dashboard widget
+      // Here I fetch the latest completed payments (scoped via booking.hotelId)
       prisma.payment.findMany({
-        where: { status: "completed" },
+        where: { status: "completed", booking: { hotelId } },
         orderBy: { createdAt: "desc" },
         take: LATEST_PAYMENTS_TAKE,
         select: { id: true, amount: true, status: true, createdAt: true, bookingId: true },
@@ -209,6 +240,7 @@ export const getDashboard = async (req: Request, res: Response) => {
         where: {
           status: "completed",
           createdAt: { gte: rangeStartUTC, lte: rangeEndUTC },
+          booking: { hotelId },
         },
         select: { amount: true, createdAt: true },
         orderBy: { createdAt: "asc" },
@@ -217,6 +249,7 @@ export const getDashboard = async (req: Request, res: Response) => {
       // Here I fetch checked_in bookings overlapping the range to build occupancy charts
       prisma.booking.findMany({
         where: {
+          hotelId,
           status: "checked_in",
           checkIn: { lte: rangeEndUTC },
           checkOut: { gte: rangeStartUTC },

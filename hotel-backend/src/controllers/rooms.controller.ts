@@ -1,7 +1,8 @@
-import { Request, Response } from "express";
+import type { Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
 import { Prisma, RoomStatus } from "@prisma/client";
+import type { AuthRequest } from "../middlewares/authMiddleware";
 
 /* =====================
    ZOD VALIDATION (CORE)
@@ -9,16 +10,25 @@ import { Prisma, RoomStatus } from "@prisma/client";
 
 /**
  * Here I validate and coerce the room payload:
- * - I keep number required
- * - I coerce floor/roomTypeId to numbers
- * - I default status to "disponible" if not provided
+ * - number required
+ * - floor coerced to int
+ * - roomTypeId required (because Prisma model requires it)
+ * - status defaults to "disponible"
  */
 const createRoomSchema = z.object({
   number: z.string().min(1, "Room number is required"),
   floor: z.preprocess((v) => Number(v), z.number().int().nonnegative()),
-  roomTypeId: z.preprocess((v) => Number(v), z.number().int().positive()),
 
-  // Here I treat ""/null/undefined as "not provided" and then default it
+  /**
+   * IMPORTANT:
+   * Here I treat ""/null/undefined as "missing" instead of converting to 0.
+   * This avoids the classic Number("") === 0 validation bug.
+   */
+  roomTypeId: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? undefined : Number(v)),
+    z.number({ required_error: "Room type is required" }).int().positive("Room type is required")
+  ),
+
   status: z
     .preprocess(
       (v) => (v === undefined || v === null || v === "" ? undefined : v),
@@ -30,18 +40,22 @@ const createRoomSchema = z.object({
   description: z.string().optional(),
 });
 
-// Here I reuse the same schema for updates, but everything becomes optional
 const updateRoomSchema = createRoomSchema.partial();
 
-/**
- * Here I check if a room currently has an active check-in.
- * I use this to block risky actions like setting maintenance or deleting an occupied room.
- */
-async function hasActiveCheckIn(roomId: number) {
+/* =====================
+   INTERNAL HELPERS
+===================== */
+
+async function hasActiveCheckIn(roomId: number, hotelId: number) {
   const active = await prisma.booking.findFirst({
-    where: { roomId, status: "checked_in" },
+    where: {
+      roomId,
+      hotelId,
+      status: "checked_in",
+    },
     select: { id: true },
   });
+
   return !!active;
 }
 
@@ -49,43 +63,33 @@ async function hasActiveCheckIn(roomId: number) {
    GET /api/rooms
 ===================== */
 
-export const getAllRooms = async (req: Request, res: Response) => {
+export const getAllRooms = async (req: AuthRequest, res: Response) => {
   try {
-    /**
-     * Here I support:
-     * - filters: status, roomTypeId
-     * - search: number/description
-     * - pagination: page/limit
-     */
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
+
     const { status, roomTypeId, search } = req.query;
 
     const pageNum = Number(req.query.page) || 1;
     const limitNum = Number(req.query.limit) || 20;
     const skip = (pageNum - 1) * limitNum;
 
-    const where: Prisma.RoomWhereInput = {};
+    const where: Prisma.RoomWhereInput = { hotelId };
 
-    // Here I validate status against the Prisma enum to avoid invalid queries
     if (status && typeof status === "string") {
       if ((Object.values(RoomStatus) as string[]).includes(status)) {
         where.status = status as RoomStatus;
       } else {
-        return res.status(400).json({
-          success: false,
-          code: "INVALID_STATUS",
-          error: "Invalid status",
-        });
+        return res.status(400).json({ success: false, code: "INVALID_STATUS", error: "Invalid status" });
       }
     }
 
     if (roomTypeId && !isNaN(Number(roomTypeId))) where.roomTypeId = Number(roomTypeId);
 
-    // Here I apply a basic "contains" search on number/description
     if (search && typeof search === "string") {
       where.OR = [{ number: { contains: search } }, { description: { contains: search } }];
     }
 
-    // Here I fetch data + total count in parallel for faster pagination responses
     const [rooms, total] = await Promise.all([
       prisma.room.findMany({
         where,
@@ -108,7 +112,7 @@ export const getAllRooms = async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    console.error("Error en getAllRooms:", error);
+    console.error("Error in getAllRooms:", error);
     return res.status(500).json({ success: false, error: "Error fetching rooms" });
   }
 };
@@ -117,9 +121,11 @@ export const getAllRooms = async (req: Request, res: Response) => {
    POST /api/rooms
 ===================== */
 
-export const createRoom = async (req: Request, res: Response) => {
+export const createRoom = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate the payload before creating the room
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
+
     const parsed = createRoomSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -130,22 +136,37 @@ export const createRoom = async (req: Request, res: Response) => {
       });
     }
 
-    // Here I create the room and include its roomType for UI convenience
+    // ✅ MULTI-TENANT SAFETY: roomType must belong to this hotel
+    const roomType = await prisma.roomType.findFirst({
+      where: { id: parsed.data.roomTypeId, hotelId },
+      select: { id: true },
+    });
+
+    if (!roomType) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_ROOM_TYPE",
+        error: "Room type does not exist in this hotel",
+      });
+    }
+
     const room = await prisma.room.create({
-      data: parsed.data,
+      data: {
+        hotelId,
+        ...parsed.data,
+      },
       include: { roomType: true },
     });
 
     return res.status(201).json({ success: true, data: room });
   } catch (error: any) {
-    console.error("Error en createRoom:", error);
+    console.error("Error in createRoom:", error);
 
-    // Here I handle unique constraint issues (room number must be unique)
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return res.status(400).json({
         success: false,
         code: "ROOM_NUMBER_EXISTS",
-        error: "Room number already exists",
+        error: "Room number already exists in this hotel",
       });
     }
 
@@ -157,24 +178,24 @@ export const createRoom = async (req: Request, res: Response) => {
    GET /api/rooms/:id
 ===================== */
 
-export const getRoomById = async (req: Request, res: Response) => {
+export const getRoomById = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate the ID param
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
 
-    const room = await prisma.room.findUnique({
-      where: { id },
+    const room = await prisma.room.findFirst({
+      where: { id, hotelId },
       include: { roomType: true },
     });
 
-    if (!room) {
-      return res.status(404).json({ success: false, error: "Room not found" });
-    }
+    if (!room) return res.status(404).json({ success: false, error: "Room not found" });
 
     return res.status(200).json({ success: true, data: room });
   } catch (error) {
-    console.error("Error en getRoomById:", error);
+    console.error("Error in getRoomById:", error);
     return res.status(500).json({ success: false, error: "Error fetching room" });
   }
 };
@@ -183,9 +204,11 @@ export const getRoomById = async (req: Request, res: Response) => {
    PUT /api/rooms/:id
 ===================== */
 
-export const updateRoom = async (req: Request, res: Response) => {
+export const updateRoom = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate the ID and the payload
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
 
@@ -199,12 +222,31 @@ export const updateRoom = async (req: Request, res: Response) => {
       });
     }
 
-    /**
-     * Here I enforce "real product" rules for manual status changes:
-     * I never allow setting maintenance/available if the room has an active check-in.
-     */
+    const existingRoom = await prisma.room.findFirst({
+      where: { id, hotelId },
+      select: { id: true },
+    });
+
+    if (!existingRoom) return res.status(404).json({ success: false, error: "Room not found" });
+
+    // ✅ If roomTypeId is being changed, validate it belongs to this hotel
+    if (parsed.data.roomTypeId) {
+      const roomType = await prisma.roomType.findFirst({
+        where: { id: parsed.data.roomTypeId, hotelId },
+        select: { id: true },
+      });
+
+      if (!roomType) {
+        return res.status(400).json({
+          success: false,
+          code: "INVALID_ROOM_TYPE",
+          error: "Room type does not exist in this hotel",
+        });
+      }
+    }
+
     if (parsed.data.status) {
-      const occupied = await hasActiveCheckIn(id);
+      const occupied = await hasActiveCheckIn(id, hotelId);
 
       if (occupied && parsed.data.status === RoomStatus.mantenimiento) {
         return res.status(400).json({
@@ -223,7 +265,6 @@ export const updateRoom = async (req: Request, res: Response) => {
       }
     }
 
-    // Here I update the room and return the roomType for UI rendering
     const updated = await prisma.room.update({
       where: { id },
       data: parsed.data,
@@ -231,13 +272,8 @@ export const updateRoom = async (req: Request, res: Response) => {
     });
 
     return res.status(200).json({ success: true, data: updated });
-  } catch (error: any) {
-    console.error("Error en updateRoom:", error);
-
-    if (error.code === "P2025") {
-      return res.status(404).json({ success: false, error: "Room not found" });
-    }
-
+  } catch (error) {
+    console.error("Error in updateRoom:", error);
     return res.status(500).json({ success: false, error: "Error updating room" });
   }
 };
@@ -246,14 +282,22 @@ export const updateRoom = async (req: Request, res: Response) => {
    DELETE /api/rooms/:id
 ===================== */
 
-export const deleteRoom = async (req: Request, res: Response) => {
+export const deleteRoom = async (req: AuthRequest, res: Response) => {
   try {
-    // Here I validate the ID before deleting
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
+
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
 
-    // Here I block deletion if the room has an active check-in
-    const occupied = await hasActiveCheckIn(id);
+    const room = await prisma.room.findFirst({
+      where: { id, hotelId },
+      select: { id: true },
+    });
+
+    if (!room) return res.status(404).json({ success: false, error: "Room not found" });
+
+    const occupied = await hasActiveCheckIn(id, hotelId);
     if (occupied) {
       return res.status(400).json({
         success: false,
@@ -266,7 +310,7 @@ export const deleteRoom = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, message: "Room deleted successfully" });
   } catch (error) {
-    console.error("Error en deleteRoom:", error);
+    console.error("Error in deleteRoom:", error);
     return res.status(500).json({ success: false, error: "Error deleting room" });
   }
 };
