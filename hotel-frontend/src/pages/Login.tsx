@@ -18,26 +18,38 @@ type LoginResponse = {
   user: AuthUser;
   hotel?: { id: number; code: string; name: string };
   message?: string;
+  error?: string;
+  code?: string;
+  details?: any;
 };
 
 export default function Login() {
-  // Here I store form state and I remember the last used hotelCode
+  /**
+   * Here I store form state and I remember the last used hotelCode.
+   * This makes repeated testing and real usage faster.
+   */
   const [hotelCode, setHotelCode] = useState(
     () => localStorage.getItem("hotelCode") || ""
   );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Here I keep an inline error message only for this form
+  /**
+   * Here I keep an inline error message only for this form.
+   * I prefer this instead of global toasts for login failures, to avoid noise.
+   */
   const [error, setError] = useState("");
 
-  // Here I track loading state to disable inputs and prevent double submits
+  // Here I track loading state to disable inputs and prevent double submits.
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Here I use AuthContext to persist token/user after successful login
+  /**
+   * Here I use AuthContext to persist token/user after successful login.
+   * AuthContext should be the single source of truth for auth state.
+   */
   const { login } = useAuth();
 
   /**
@@ -49,10 +61,18 @@ export default function Login() {
     (location.state as any)?.from ||
     "/";
 
+  /**
+   * Here I clear the inline error as soon as the user changes input.
+   * This makes the form feel more responsive and less "stuck".
+   */
+  const clearErrorIfAny = () => {
+    if (error) setError("");
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    // Here I clear old errors before validating
+    // Here I clear old errors before validating.
     setError("");
 
     if (!hotelCode.trim() || !email.trim() || !password.trim()) {
@@ -63,11 +83,19 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const res = await api.post<LoginResponse>("/auth/login", {
-        hotelCode: hotelCode.trim(),
-        email: email.trim(),
-        password,
-      });
+      /**
+       * Here I silence the global error toast for login.
+       * I want login errors to appear only inside this form.
+       */
+      const res = await api.post<LoginResponse>(
+        "/auth/login",
+        {
+          hotelCode: hotelCode.trim(),
+          email: email.trim(),
+          password,
+        },
+        { silentErrorToast: true } as any
+      );
 
       const token = res.data?.token;
       const user = res.data?.user;
@@ -77,10 +105,10 @@ export default function Login() {
         return;
       }
 
-      // Here I persist auth state
+      // Here I persist auth state in a single place (AuthContext).
       login(token, user);
 
-      // Here I remember the last used hotelCode to speed up next login
+      // Here I remember the last used hotelCode to speed up next login.
       localStorage.setItem("hotelCode", hotelCode.trim());
 
       toast.success("Logged in successfully");
@@ -88,6 +116,7 @@ export default function Login() {
     } catch (err: unknown) {
       /**
        * Here I prefer backend errors (error/message) and fallback to axios message.
+       * This is useful because your backend returns { error, code, details } often.
        */
       const message = axios.isAxiosError(err)
         ? (err.response?.data as any)?.error ||
@@ -118,10 +147,14 @@ export default function Login() {
               <label className="mb-1 block text-sm font-medium">Hotel code</label>
               <input
                 value={hotelCode}
-                onChange={(e) => setHotelCode(e.target.value)}
+                onChange={(e) => {
+                  clearErrorIfAny();
+                  setHotelCode(e.target.value);
+                }}
                 className="w-full rounded-md border px-3 py-2"
                 placeholder="e.g. demo-hotel"
                 disabled={loading}
+                autoComplete="organization"
               />
               <p className="mt-1 text-xs text-slate-500">
                 I use this code to select the hotel tenant you belong to.
@@ -132,10 +165,14 @@ export default function Login() {
               <label className="mb-1 block text-sm font-medium">Email</label>
               <input
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  clearErrorIfAny();
+                  setEmail(e.target.value);
+                }}
                 className="w-full rounded-md border px-3 py-2"
                 placeholder="you@hotel.com"
                 disabled={loading}
+                autoComplete="email"
               />
             </div>
 
@@ -144,9 +181,13 @@ export default function Login() {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  clearErrorIfAny();
+                  setPassword(e.target.value);
+                }}
                 className="w-full rounded-md border px-3 py-2"
                 disabled={loading}
+                autoComplete="current-password"
               />
             </div>
 
@@ -158,7 +199,10 @@ export default function Login() {
           {/* Here I add a clear CTA to create a new hotel */}
           <p className="mt-4 text-center text-sm text-slate-600">
             I don’t have a hotel yet?{" "}
-            <Link to="/signup" className="font-medium text-blue-600 hover:underline">
+            <Link
+              to="/signup"
+              className="font-medium text-blue-600 hover:underline"
+            >
               Create one
             </Link>
           </p>

@@ -54,9 +54,16 @@ interface Payment {
   status: PaymentStatus;
 }
 
+/**
+ * Here I map backend errors into user-friendly messages.
+ * I also support BOOKING_HAS_DUE and display the due amount when possible.
+ */
 function mapApiError(err: any): string {
   const code = err?.response?.data?.code as string | undefined;
   const serverMsg = err?.response?.data?.error as string | undefined;
+
+  // Here I read optional extra info from the backend (like due amount).
+  const due = err?.response?.data?.details?.due as number | undefined;
 
   switch (code) {
     case "ROOM_NOT_AVAILABLE":
@@ -67,11 +74,25 @@ function mapApiError(err: any): string {
       return "Check-out must be after check-in.";
     case "BOOKING_LOCKED":
       return "This booking can’t be edited in its current status.";
+
+    // Here I show a clear message when backend blocks check-out due to outstanding balance.
+    case "BOOKING_HAS_DUE":
+      return typeof due === "number"
+        ? `Cannot check-out. Outstanding balance: ${new Intl.NumberFormat("en-UY", {
+            style: "currency",
+            currency: "UYU",
+            minimumFractionDigits: 0,
+          }).format(due)}`
+        : "Cannot check-out while there is an outstanding balance.";
+
     default:
       return serverMsg || "There was an error. Please try again.";
   }
 }
 
+/**
+ * Here I normalize booking status for safety (backend can return strings).
+ */
 function normalizeStatus(status: string): BookingStatus | null {
   const s = String(status || "").toLowerCase();
   if (
@@ -103,47 +124,11 @@ export default function Reservations() {
 
   const [loading, setLoading] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
+
+  // Here I store a local error banner message (so I avoid duplicate global toasts).
   const [error, setError] = useState<string | null>(null);
 
   const [updatingId, setUpdatingId] = useState<number | null>(null);
-
-  const loadBookings = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.get("/bookings");
-      const data = res.data?.data ?? res.data;
-      setBookings(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      console.error("Error loading bookings", err);
-      setError(mapApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadPayments = async () => {
-    try {
-      setLoadingPayments(true);
-      const res = await api.get("/payments");
-      const data = res.data?.data ?? res.data;
-      setPayments(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Error loading payments for reservations", err);
-      
-    } finally {
-      setLoadingPayments(false);
-    }
-  };
-
-  const refreshAll = async () => {
-    await Promise.all([loadBookings(), loadPayments()]);
-  };
-
-  useEffect(() => {
-    refreshAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const formatDate = (value: string) => {
     try {
@@ -159,6 +144,65 @@ export default function Reservations() {
       currency: "UYU",
       minimumFractionDigits: 0,
     }).format(value);
+
+  /**
+   * Here I load bookings from the backend.
+   * I set silentErrorToast=true because I render my own banner in this page.
+   */
+  const loadBookings = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const res = await api.get("/bookings", {
+        // Here I prevent global toast duplication on this page.
+        silentErrorToast: true,
+      } as any);
+
+      const data = res.data?.data ?? res.data;
+      setBookings(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error("Error loading bookings", err);
+      setError(mapApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Here I load payments so I can compute paid/due amounts per booking.
+   * I also set silentErrorToast=true to avoid duplicate global toasts.
+   */
+  const loadPayments = async () => {
+    try {
+      setLoadingPayments(true);
+
+      const res = await api.get("/payments", {
+        silentErrorToast: true,
+      } as any);
+
+      const data = res.data?.data ?? res.data;
+      setPayments(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error loading payments for reservations", err);
+      // Here I do not block the whole page if payments fail; bookings can still render.
+      // If you want, we can also show a small warning banner just for payments.
+    } finally {
+      setLoadingPayments(false);
+    }
+  };
+
+  /**
+   * Here I refresh both bookings and payments at the same time.
+   */
+  const refreshAll = async () => {
+    await Promise.all([loadBookings(), loadPayments()]);
+  };
+
+  useEffect(() => {
+    refreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const getBookingStatusLabel = (status: string) => {
     const lower = status.toLowerCase();
@@ -189,23 +233,46 @@ export default function Reservations() {
     .filter((p) => p.status === "completed")
     .reduce((sum, p) => sum + p.amount, 0);
 
+  /**
+   * Here I build a helper map: bookingId -> { paid, due }.
+   * I do this once so I can reuse it in:
+   * - filters
+   * - table rows
+   * - disabling Check-out when there is due amount
+   */
+  const bookingMoneyMap = useMemo(() => {
+    const map = new Map<number, { paid: number; due: number }>();
+
+    for (const b of bookings) {
+      const paid = payments
+        .filter((p) => p.bookingId === b.id && p.status === "completed")
+        .reduce((sum, p) => sum + p.amount, 0);
+
+      const due =
+        b.totalPrice != null ? Math.max((b.totalPrice ?? 0) - paid, 0) : 0;
+
+      map.set(b.id, { paid, due });
+    }
+
+    return map;
+  }, [bookings, payments]);
+
   const filteredBookings = useMemo(() => {
     return bookings.filter((booking) => {
       const guestName = booking.guest?.name?.toLowerCase() ?? "";
+
       const matchesGuest =
         !filterGuest.trim() ||
         guestName.includes(filterGuest.trim().toLowerCase());
 
       const normalized = normalizeStatus(booking.status);
+
       const matchesBookingStatus =
         !filterBookingStatus || normalized === filterBookingStatus;
 
-      const paymentsForBooking = payments.filter(
-        (p) => p.bookingId === booking.id && p.status === "completed"
-      );
-      const totalPaid = paymentsForBooking.reduce((sum, p) => sum + p.amount, 0);
-      const remaining =
-        booking.totalPrice != null ? booking.totalPrice - totalPaid : 0;
+      const money = bookingMoneyMap.get(booking.id) ?? { paid: 0, due: 0 };
+      const totalPaid = money.paid;
+      const remaining = money.due;
 
       let paymentStatus: "none" | "partial" | "full" = "none";
       if (totalPaid <= 0) paymentStatus = "none";
@@ -217,12 +284,27 @@ export default function Reservations() {
 
       return matchesGuest && matchesPaymentStatus && matchesBookingStatus;
     });
-  }, [bookings, payments, filterGuest, filterPaymentStatus, filterBookingStatus]);
+  }, [
+    bookings,
+    bookingMoneyMap,
+    filterGuest,
+    filterPaymentStatus,
+    filterBookingStatus,
+  ]);
 
-  const getQuickActions = (status: BookingStatus): Array<{
+  /**
+   * Here I define quick actions for each status.
+   * Important: I disable Check-out when due > 0 to match backend rule.
+   */
+  const getQuickActions = (
+    status: BookingStatus,
+    due: number
+  ): Array<{
     label: string;
     next: BookingStatus;
     variant?: "secondary" | "danger" | "ghost" | "default";
+    disabled?: boolean;
+    disabledReason?: string;
   }> => {
     if (status === "pending") {
       return [
@@ -239,12 +321,24 @@ export default function Reservations() {
     }
 
     if (status === "checked_in") {
-      return [{ label: "Check-out", next: "checked_out", variant: "secondary" }];
+      return [
+        {
+          label: "Check-out",
+          next: "checked_out",
+          variant: "secondary",
+          disabled: due > 0,
+          disabledReason: due > 0 ? `Outstanding balance: ${formatCurrency(due)}` : undefined,
+        },
+      ];
     }
 
     return [];
   };
 
+  /**
+   * Here I patch booking status.
+   * I set silentErrorToast=true because I show the banner with setError().
+   */
   const updateStatus = async (bookingId: number, next: BookingStatus) => {
     const ok = window.confirm(
       `Are you sure you want to set booking #${bookingId} to "${next}"?`
@@ -255,10 +349,14 @@ export default function Reservations() {
       setUpdatingId(bookingId);
       setError(null);
 
-      // Backend: PATCH /api/bookings/:id/status { status }
-      await api.patch(`/bookings/${bookingId}/status`, { status: next });
+      await api.patch(
+        `/bookings/${bookingId}/status`,
+        { status: next },
+        { silentErrorToast: true } as any
+      );
 
-      await loadBookings();
+      // Here I refresh both lists so Paid/Due and status stay in sync.
+      await refreshAll();
     } catch (err: any) {
       console.error("Error updating booking status", err);
       setError(mapApiError(err));
@@ -278,7 +376,6 @@ export default function Reservations() {
               Refresh
             </Button>
 
-            
             <RoleGate allowed={["admin", "receptionist"]}>
               <Button
                 variant="secondary"
@@ -314,7 +411,9 @@ export default function Reservations() {
                 Total paid (completed payments)
               </p>
               <p className="text-lg font-semibold mt-1">
-                {loadingPayments ? "Loading..." : formatCurrency(totalPaidAllBookings)}
+                {loadingPayments
+                  ? "Loading..."
+                  : formatCurrency(totalPaidAllBookings)}
               </p>
             </div>
           </div>
@@ -461,15 +560,11 @@ export default function Reservations() {
                 {filteredBookings.map((booking) => {
                   const normalized = normalizeStatus(booking.status);
 
-                  const paymentsForBooking = payments.filter(
-                    (p) => p.bookingId === booking.id && p.status === "completed"
-                  );
-                  const totalPaid = paymentsForBooking.reduce(
-                    (sum, p) => sum + p.amount,
-                    0
-                  );
-                  const remaining =
-                    booking.totalPrice != null ? booking.totalPrice - totalPaid : 0;
+                  const money =
+                    bookingMoneyMap.get(booking.id) ?? { paid: 0, due: 0 };
+
+                  const totalPaid = money.paid;
+                  const remaining = money.due;
 
                   let paymentStatusLabel = "No payments";
                   let paymentStatusVariant: "success" | "warning" | "danger" =
@@ -486,7 +581,10 @@ export default function Reservations() {
                     paymentStatusVariant = "success";
                   }
 
-                  const quickActions = normalized ? getQuickActions(normalized) : [];
+                  const quickActions = normalized
+                    ? getQuickActions(normalized, remaining)
+                    : [];
+
                   const isUpdating = updatingId === booking.id;
 
                   return (
@@ -501,7 +599,8 @@ export default function Reservations() {
                           : "-"}
                       </td>
                       <td className="px-4 py-2 align-top">
-                        {formatDate(booking.checkIn)} → {formatDate(booking.checkOut)}
+                        {formatDate(booking.checkIn)} →{" "}
+                        {formatDate(booking.checkOut)}
                       </td>
                       <td className="px-4 py-2 align-top text-right">
                         {formatCurrency(booking.totalPrice ?? 0)}
@@ -513,7 +612,9 @@ export default function Reservations() {
                         {formatCurrency(remaining)}
                       </td>
                       <td className="px-4 py-2 align-top">
-                        <Badge variant={getBookingStatusVariant(booking.status)}>
+                        <Badge
+                          variant={getBookingStatusVariant(booking.status)}
+                        >
                           {getBookingStatusLabel(booking.status)}
                         </Badge>
                       </td>
@@ -527,7 +628,9 @@ export default function Reservations() {
                         {!normalized ? (
                           <span className="text-xs text-gray-500">-</span>
                         ) : quickActions.length === 0 ? (
-                          <span className="text-xs text-gray-500">No actions</span>
+                          <span className="text-xs text-gray-500">
+                            No actions
+                          </span>
                         ) : (
                           <div className="flex flex-wrap gap-2">
                             {quickActions.map((a) => (
@@ -536,7 +639,8 @@ export default function Reservations() {
                                 type="button"
                                 variant={a.variant ?? "secondary"}
                                 className="text-xs px-3 py-1"
-                                disabled={isUpdating}
+                                disabled={isUpdating || a.disabled}
+                                title={a.disabled ? a.disabledReason : undefined}
                                 onClick={() => updateStatus(booking.id, a.next)}
                               >
                                 {isUpdating ? "..." : a.label}
@@ -551,12 +655,13 @@ export default function Reservations() {
                           type="button"
                           variant="ghost"
                           className="text-xs px-3 py-1"
-                          onClick={() => navigate(`/reservations/${booking.id}`)}
+                          onClick={() =>
+                            navigate(`/reservations/${booking.id}`)
+                          }
                         >
                           View details
                         </Button>
 
-                        
                         <RoleGate allowed={["admin", "receptionist"]}>
                           <Button
                             type="button"

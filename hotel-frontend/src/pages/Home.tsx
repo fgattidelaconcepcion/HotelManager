@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -36,7 +37,7 @@ interface LatestPayment {
 type SeriesPoint = { date: string; value: number };
 
 interface DashboardData {
-  // old fields (keep)
+  // Here I keep the "original" dashboard fields so older backend responses still work.
   totalRooms: number;
   occupancyRate: number;
   activeBookingsCount: number;
@@ -46,11 +47,11 @@ interface DashboardData {
   latestBookings: LatestBooking[];
   latestPayments: LatestPayment[];
 
-  // old debug
+  // Here I keep some optional debug fields (useful while I verify timezone correctness).
   serverNow?: string | null;
   tz?: string | null;
 
-  // new fields (optional)
+  // Here I keep newer optional fields that the backend may send.
   maintenanceRooms?: number;
   availableRooms?: number;
   occupiedRoomsToday?: number;
@@ -63,6 +64,10 @@ interface DashboardData {
   tzOffsetMinutes?: number;
 }
 
+/**
+ * Here I convert a date string into a real Date safely.
+ * If parsing fails, I return null to avoid crashing the UI.
+ */
 function toDate(value: string) {
   const d = new Date(value);
   return isNaN(d.getTime()) ? null : d;
@@ -71,8 +76,10 @@ function toDate(value: string) {
 export default function Home() {
   const navigate = useNavigate();
 
+  // Here I control the dashboard range selector (7 or 30 days).
   const [rangeDays, setRangeDays] = useState<7 | 30>(7);
 
+  // Here I store all dashboard data from the backend.
   const [data, setData] = useState<DashboardData>({
     totalRooms: 0,
     occupancyRate: 0,
@@ -86,9 +93,13 @@ export default function Home() {
     tz: null,
   });
 
+  // Here I keep local loading + error state for the dashboard.
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Here I format money in UYU (Uruguay pesos).
+   */
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat("en-UY", {
       style: "currency",
@@ -96,6 +107,10 @@ export default function Home() {
       minimumFractionDigits: 0,
     }).format(value);
 
+  /**
+   * Here I map booking status to a badge style.
+   * This keeps the UI consistent across the app.
+   */
   const getBookingStatusVariant = (status: string) => {
     const lower = status.toLowerCase();
     if (lower === "pending") return "warning";
@@ -105,6 +120,10 @@ export default function Home() {
     return "danger";
   };
 
+  /**
+   * Here I load dashboard data from the backend.
+   * I use "silent" when I don't want to show a loading spinner (ex: range changes).
+   */
   const loadData = async (opts?: { silent?: boolean }) => {
     const silent = !!opts?.silent;
 
@@ -116,11 +135,18 @@ export default function Home() {
         params: { range: rangeDays },
       });
 
+      // Here I support both shapes: { data: ... } or direct payload.
       const payload = res.data?.data ?? res.data;
 
-      // Merge safely: support old + new API shapes
+      /**
+       * Here I merge safely:
+       * - if the backend doesn't send a field, I fallback to a sensible default
+       * - this prevents UI breaks when backend evolves
+       */
       setData((prev) => ({
         ...prev,
+
+        // Core fields
         totalRooms: payload?.totalRooms ?? 0,
         occupancyRate: payload?.occupancyRate ?? 0,
         activeBookingsCount: payload?.activeBookingsCount ?? 0,
@@ -134,7 +160,7 @@ export default function Home() {
           ? payload.latestPayments
           : [],
 
-        // debug
+        // Debug fields
         serverNow: payload?.serverNow ?? null,
         tz: payload?.tz ?? null,
         tzOffsetMinutes:
@@ -142,7 +168,7 @@ export default function Home() {
             ? payload.tzOffsetMinutes
             : prev.tzOffsetMinutes,
 
-        // new fields
+        // Optional newer fields
         maintenanceRooms:
           typeof payload?.maintenanceRooms === "number"
             ? payload.maintenanceRooms
@@ -190,34 +216,49 @@ export default function Home() {
     }
   };
 
+  /**
+   * Here I load data once when the page mounts.
+   */
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Here I refresh the dashboard when the user changes the range selector.
+   */
   useEffect(() => {
-    // refresh when range changes
     loadData({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rangeDays]);
 
   // ===== Mini chart values (no libs) =====
   const revenueSeries = data.revenueSeries ?? [];
+
+  /**
+   * Here I compute the max revenue to scale mini bars.
+   */
   const maxRevenue = useMemo(() => {
     if (!revenueSeries.length) return 0;
     return revenueSeries.reduce((m, p) => Math.max(m, p.value), 0);
   }, [revenueSeries]);
 
   const totalRoomsLabel = data.totalRooms ?? 0;
+
   const availableRoomsLabel =
     typeof data.availableRooms === "number" ? data.availableRooms : null;
+
   const maintenanceRoomsLabel =
     typeof data.maintenanceRooms === "number" ? data.maintenanceRooms : null;
 
+  /**
+   * Here I show occupied rooms today.
+   * If the backend doesn't provide it, I fallback to activeBookingsCount.
+   */
   const occupiedRoomsTodayLabel =
     typeof data.occupiedRoomsToday === "number"
       ? data.occupiedRoomsToday
-      : data.activeBookingsCount; // fallback
+      : data.activeBookingsCount;
 
   const pendingBookings = data.pendingBookingsCount ?? null;
   const pendingPayments = data.pendingPaymentsCount ?? null;
@@ -229,7 +270,7 @@ export default function Home() {
         description="Overall hotel summary."
         actions={
           <div className="flex gap-2 items-center">
-            {/* Range selector */}
+            {/* Here I let the user switch the dashboard range. */}
             <select
               value={rangeDays}
               onChange={(e) => setRangeDays(Number(e.target.value) as 7 | 30)}
@@ -240,7 +281,11 @@ export default function Home() {
               <option value={30}>Last 30 days</option>
             </select>
 
-            <Button variant="secondary" onClick={() => loadData()} disabled={loading}>
+            <Button
+              variant="secondary"
+              onClick={() => loadData()}
+              disabled={loading}
+            >
               {loading ? "Updating..." : "Refresh"}
             </Button>
           </div>
@@ -259,18 +304,19 @@ export default function Home() {
                 Occupancy, activity and revenue at a glance.
               </p>
 
+              {/* Here I show debug info only when backend sends it. */}
               {(data.serverNow || data.tz || data.tzOffsetMinutes != null) && (
                 <p className="text-xs text-slate-400 mt-2">
                   Server time: {data.serverNow ?? "-"}{" "}
                   {data.tz ? `(TZ: ${data.tz})` : ""}
-                  {data.tzOffsetMinutes != null ? ` (offset: ${data.tzOffsetMinutes}m)` : ""}
+                  {data.tzOffsetMinutes != null
+                    ? ` (offset: ${data.tzOffsetMinutes}m)`
+                    : ""}
                 </p>
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Badge variant="success">Demo production</Badge>
-            </div>
+            {/* ✅ Here I removed the "Demo production" badge because this is a real app now. */}
           </div>
         </CardBody>
       </Card>
@@ -342,7 +388,9 @@ export default function Home() {
           <Card>
             <CardBody>
               <p className="text-xs text-slate-500">Pending reservations</p>
-              <p className="text-2xl font-semibold mt-1">{pendingBookings ?? "-"}</p>
+              <p className="text-2xl font-semibold mt-1">
+                {pendingBookings ?? "-"}
+              </p>
               <p className="text-xs text-slate-400 mt-1">
                 Reservations that may need confirmation.
               </p>
@@ -362,7 +410,9 @@ export default function Home() {
           <Card>
             <CardBody>
               <p className="text-xs text-slate-500">Pending payments</p>
-              <p className="text-2xl font-semibold mt-1">{pendingPayments ?? "-"}</p>
+              <p className="text-2xl font-semibold mt-1">
+                {pendingPayments ?? "-"}
+              </p>
               <p className="text-xs text-slate-400 mt-1">
                 Payments marked as pending.
               </p>
@@ -422,6 +472,7 @@ export default function Home() {
               {revenueSeries.map((p) => {
                 const h =
                   maxRevenue > 0 ? Math.round((p.value / maxRevenue) * 100) : 0;
+
                 return (
                   <div key={p.date} className="flex-1 min-w-[6px]">
                     <div
@@ -430,7 +481,7 @@ export default function Home() {
                       style={{ height: `${Math.max(2, h)}%` }}
                     />
                     <div className="text-[10px] text-slate-400 mt-1 text-center truncate">
-                      {p.date.slice(5)} {/* MM-DD */}
+                      {p.date.slice(5)}
                     </div>
                   </div>
                 );
@@ -459,7 +510,9 @@ export default function Home() {
             </div>
 
             {data.latestBookings.length === 0 ? (
-              <p className="text-sm text-slate-500">There are no reservations yet.</p>
+              <p className="text-sm text-slate-500">
+                There are no reservations yet.
+              </p>
             ) : (
               <div className="space-y-2">
                 {data.latestBookings.map((b) => (
@@ -541,7 +594,9 @@ export default function Home() {
                         type="button"
                         variant="secondary"
                         className="text-xs px-2 py-1"
-                        onClick={() => navigate(`/payments?bookingId=${p.bookingId}`)}
+                        onClick={() =>
+                          navigate(`/payments?bookingId=${p.bookingId}`)
+                        }
                       >
                         Open
                       </Button>
