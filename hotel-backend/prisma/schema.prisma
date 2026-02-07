@@ -159,8 +159,14 @@ model Booking {
   checkOut   DateTime
   totalPrice Float
 
-  status    BookingStatus @default(pending)
+  status     BookingStatus @default(pending)
   createdAt DateTime      @default(now())
+
+  // Here I store the real operational timestamps.
+  // This allows me to know when the guest actually checked in/out,
+  // not just the scheduled dates.
+  checkedInAt  DateTime?
+  checkedOutAt DateTime?
 
   hotel    Hotel     @relation(fields: [hotelId], references: [id])
   room     Room      @relation(fields: [roomId], references: [id])
@@ -168,6 +174,7 @@ model Booking {
   guest    Guest?    @relation(fields: [guestId], references: [id])
   payments Payment[]
 }
+
 
 /**
  * ============================

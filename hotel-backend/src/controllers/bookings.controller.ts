@@ -102,6 +102,34 @@ function getRoomStatusForBookingTransition(next: BookingStatus): RoomStatus | nu
   return null;
 }
 
+/**
+ * Here I calculate how much is still due for a booking.
+ * I sum only COMPLETED payments because pending/failed should not reduce the due amount.
+ *
+ * Note:
+ * - I don't fully know if you store "Completed" or "completed" in DB,
+ *   so I support both values to make this robust.
+ */
+async function getBookingDueAmount(
+  tx: Prisma.TransactionClient,
+  bookingId: number,
+  totalPrice: number
+): Promise<number> {
+  const completed = await tx.payment.aggregate({
+    where: {
+      bookingId,
+      status: { in: ["Completed", "completed"] },
+    },
+    _sum: { amount: true },
+  });
+
+  const paid = Number(completed._sum.amount ?? 0);
+  const due = Number(totalPrice) - paid;
+
+  // Here I avoid negative due due to rounding or accidental overpayment.
+  return due > 0 ? due : 0;
+}
+
 /* ============================
    SAFE SELECTS
 ============================ */
@@ -437,7 +465,8 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/bookings/:id/status
- * Here I enforce tenant isolation and update room status safely.
+ * Here I enforce tenant isolation, validate transitions, set timestamps,
+ * block check-out when there is due amount, and update room status safely.
  */
 export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
   try {
@@ -457,6 +486,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
     const next = parsed.data.status;
 
     const updated = await prisma.$transaction(async (tx) => {
+      // Here I load the booking scoped by (id + hotelId) to enforce tenant isolation.
       const booking = await tx.booking.findFirst({
         where: { id, hotelId },
         include: { room: true },
@@ -468,6 +498,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
+      // Here I define the only allowed status transitions.
       const transitions: Record<BookingStatus, BookingStatus[]> = {
         pending: ["confirmed", "cancelled"],
         confirmed: ["checked_in", "cancelled"],
@@ -483,9 +514,34 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
+      //  Here I block check-out when there is still money due.
+      if (next === "checked_out") {
+        const due = await getBookingDueAmount(tx, booking.id, booking.totalPrice);
+        if (due > 0) {
+          const err: any = new Error("BOOKING_HAS_DUE");
+          err.code = "BOOKING_HAS_DUE";
+          err.details = { due };
+          throw err;
+        }
+      }
+
+      //  Here I set operational timestamps only when entering each state.
+      // I don't overwrite timestamps if they already exist.
+      const timestampPatch: Prisma.BookingUpdateInput = {};
+      if (next === "checked_in" && !booking.checkedInAt) {
+        timestampPatch.checkedInAt = new Date();
+      }
+      if (next === "checked_out" && !booking.checkedOutAt) {
+        timestampPatch.checkedOutAt = new Date();
+      }
+
+      // Here I update booking status (+ timestamps).
       const bookingUpdated = await tx.booking.update({
-        where: { id },
-        data: { status: next },
+        where: { id: booking.id },
+        data: {
+          status: next,
+          ...timestampPatch,
+        },
         include: {
           room: { include: { roomType: true } },
           guest: { select: guestSelect },
@@ -493,11 +549,15 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         },
       });
 
-      // Here I update the room status only inside this hotel
+      // Here I update the room status according to the booking transition.
       const roomStatus = getRoomStatusForBookingTransition(next);
       if (roomStatus && booking.roomId) {
+        // Here I avoid changing a maintenance room back to available.
         if (!(roomStatus === RoomStatus.disponible && booking.room?.status === RoomStatus.mantenimiento)) {
-          await tx.room.update({ where: { id: booking.roomId }, data: { status: roomStatus } });
+          await tx.room.update({
+            where: { id: booking.roomId },
+            data: { status: roomStatus },
+          });
         }
       }
 
@@ -519,6 +579,17 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         success: false,
         code: "INVALID_TRANSITION",
         error: current && next ? `Cannot transition from ${current} to ${next}` : "Invalid transition",
+      });
+    }
+
+    // ✅ Here I return a clear error when check-out is blocked due to pending balance.
+    if (error?.code === "BOOKING_HAS_DUE" || error?.message === "BOOKING_HAS_DUE") {
+      const due = error?.details?.due;
+      return res.status(400).json({
+        success: false,
+        code: "BOOKING_HAS_DUE",
+        error: "Cannot check-out while there is an outstanding balance.",
+        details: { due },
       });
     }
 

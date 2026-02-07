@@ -36,7 +36,7 @@ router.put(
   updateBooking
 );
 
-//  status workflow
+// status workflow
 router.patch(
   "/:id/status",
   authorizeRoles("admin", "receptionist"),
@@ -44,7 +44,7 @@ router.patch(
   updateBookingStatus
 );
 
-//  delete admin only
+// delete admin only
 router.delete(
   "/:id",
   authorizeRoles("admin"),
