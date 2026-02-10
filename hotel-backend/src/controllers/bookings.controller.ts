@@ -56,6 +56,11 @@ const baseBookingSchema = z.object({
 const createBookingSchema = baseBookingSchema;
 const updateBookingSchema = baseBookingSchema.partial();
 
+const moveRoomSchema = z.object({
+  roomId: z.preprocess((v) => Number(v), z.number().int().positive()),
+});
+
+
 const updateStatusSchema = z.object({
   status: z.nativeEnum(BookingStatus),
 });
@@ -549,6 +554,178 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
     }
 
     return res.status(500).json({ success: false, error: "Error updating booking" });
+  }
+};
+
+export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
+  try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
+
+    const parsed = moveRoomSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        code: "VALIDATION_ERROR",
+        error: "Invalid data",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    const nextRoomId = parsed.data.roomId;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Load booking inside tenant
+      const booking = await tx.booking.findFirst({
+        where: { id, hotelId },
+        include: {
+          room: { include: { roomType: true } },
+          guest: { select: guestSelect },
+          user: { select: userSelect },
+        },
+      });
+
+      if (!booking) {
+        const err: any = new Error("BOOKING_NOT_FOUND");
+        err.code = "BOOKING_NOT_FOUND";
+        throw err;
+      }
+
+      // V2: only allow moves for pending/confirmed
+      if (!["pending", "confirmed"].includes(booking.status)) {
+        const err: any = new Error("BOOKING_LOCKED");
+        err.code = "BOOKING_LOCKED";
+        err.details = { status: booking.status };
+        throw err;
+      }
+
+      // Prevent "move to same room"
+      if (booking.roomId === nextRoomId) {
+        const err: any = new Error("SAME_ROOM");
+        err.code = "SAME_ROOM";
+        throw err;
+      }
+
+      // Validate target room in same hotel
+      const nextRoom = await tx.room.findFirst({
+        where: { id: nextRoomId, hotelId },
+        include: { roomType: true },
+      });
+
+      if (!nextRoom) {
+        const err: any = new Error("ROOM_NOT_FOUND");
+        err.code = "ROOM_NOT_FOUND";
+        throw err;
+      }
+
+      if (nextRoom.status === RoomStatus.mantenimiento) {
+        const err: any = new Error("ROOM_IN_MAINTENANCE");
+        err.code = "ROOM_IN_MAINTENANCE";
+        throw err;
+      }
+
+      if (!nextRoom.roomType?.basePrice && nextRoom.roomType?.basePrice !== 0) {
+        const err: any = new Error("ROOM_TYPE_MISSING_PRICE");
+        err.code = "ROOM_TYPE_MISSING_PRICE";
+        throw err;
+      }
+
+      // Overlap check in target room (exclude current booking)
+      const available = await ensureRoomAvailable(
+        tx,
+        hotelId,
+        nextRoomId,
+        booking.checkIn,
+        booking.checkOut,
+        booking.id
+      );
+
+      if (!available) {
+        const err: any = new Error("ROOM_NOT_AVAILABLE");
+        err.code = "ROOM_NOT_AVAILABLE";
+        throw err;
+      }
+
+      // Recalculate price based on target roomType
+      const nights = calculateNights(booking.checkIn, booking.checkOut);
+      const totalPrice = nights * (nextRoom.roomType?.basePrice ?? 0);
+
+      // Update booking roomId + price
+      const bookingUpdated = await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          roomId: nextRoomId,
+          totalPrice,
+        },
+        include: {
+          room: { include: { roomType: true } },
+          guest: { select: guestSelect },
+          user: { select: userSelect },
+        },
+      });
+
+      return bookingUpdated;
+    });
+
+    return res.status(200).json({ success: true, data: updated });
+  } catch (error: any) {
+    console.error("Error in moveBookingRoom:", error);
+
+    if (error?.code === "BOOKING_NOT_FOUND" || error?.message === "BOOKING_NOT_FOUND") {
+      return res.status(404).json({ success: false, error: "Booking not found" });
+    }
+
+    if (error?.code === "BOOKING_LOCKED" || error?.message === "BOOKING_LOCKED") {
+      return res.status(400).json({
+        success: false,
+        code: "BOOKING_LOCKED",
+        error: "This booking can’t be moved in its current status.",
+        details: error?.details,
+      });
+    }
+
+    if (error?.code === "SAME_ROOM" || error?.message === "SAME_ROOM") {
+      return res.status(400).json({
+        success: false,
+        code: "SAME_ROOM",
+        error: "Select a different room to move this booking.",
+      });
+    }
+
+    if (error?.code === "ROOM_NOT_FOUND" || error?.message === "ROOM_NOT_FOUND") {
+      return res.status(404).json({ success: false, code: "ROOM_NOT_FOUND", error: "Room not found" });
+    }
+
+    if (error?.code === "ROOM_IN_MAINTENANCE" || error?.message === "ROOM_IN_MAINTENANCE") {
+      return res.status(400).json({
+        success: false,
+        code: "ROOM_IN_MAINTENANCE",
+        error: "This room is under maintenance and can’t be booked.",
+      });
+    }
+
+    if (error?.code === "ROOM_TYPE_MISSING_PRICE" || error?.message === "ROOM_TYPE_MISSING_PRICE") {
+      return res.status(400).json({
+        success: false,
+        code: "ROOM_TYPE_MISSING_PRICE",
+        error: "Room type base price is required to move this booking.",
+      });
+    }
+
+    if (error?.code === "ROOM_NOT_AVAILABLE" || error?.message === "ROOM_NOT_AVAILABLE") {
+      return res.status(409).json({
+        success: false,
+        code: "ROOM_NOT_AVAILABLE",
+        error: "Room is not available for the selected dates.",
+      });
+    }
+
+    return res.status(500).json({ success: false, error: "Error moving booking" });
   }
 };
 

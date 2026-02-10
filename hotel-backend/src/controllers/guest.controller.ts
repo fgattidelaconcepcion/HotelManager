@@ -8,7 +8,17 @@ import type { AuthRequest } from "../middlewares/authMiddleware";
  * Here I accept optional text fields and convert "" into null,
  * so my database stays consistent (I prefer null over empty strings).
  */
-const nullableText = z.string().optional().or(z.literal("").transform(() => null));
+const nullableText = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z.string().nullable().optional()
+);
+
+const nullableDate = z.preprocess((v) => {
+  if (v == null) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? v : d;
+}, z.date().nullable().optional());
 
 /**
  * Here I validate guest creation with Zod.
@@ -18,13 +28,19 @@ const nullableText = z.string().optional().or(z.literal("").transform(() => null
  */
 const guestSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email").optional().or(z.literal("").transform(() => null)),
+  email: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+    z.string().email("Invalid email").nullable().optional()
+  ),
   phone: nullableText,
   documentNumber: nullableText,
   address: nullableText,
-
-  
+  documentType: nullableText,
   nationality: nullableText,
+  birthDate: nullableDate,
+  gender: nullableText,
+  city: nullableText,
+  country: nullableText,
 });
 
 // Here I reuse the same schema for updates but make everything optional
@@ -85,9 +101,12 @@ export const getAllGuests = async (req: AuthRequest, res: Response) => {
         email: true,
         phone: true,
         documentNumber: true,
+        documentType: true,
         address: true,
         nationality: true,
-
+        birthDate: true,
+        city: true,
+        country: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -119,14 +138,17 @@ export const getGuestById = async (req: AuthRequest, res: Response) => {
     const guest = await prisma.guest.findFirst({
       where: { id, hotelId },
       select: {
-        id: true,
+       id: true,
         name: true,
         email: true,
         phone: true,
         documentNumber: true,
+        documentType: true,
         address: true,
         nationality: true,
-
+        birthDate: true,
+        city: true,
+        country: true,
         createdAt: true,
         updatedAt: true,
       },

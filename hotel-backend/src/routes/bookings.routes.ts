@@ -6,6 +6,7 @@ import {
   updateBooking,
   deleteBooking,
   updateBookingStatus,
+  moveBookingRoom,
 } from "../controllers/bookings.controller";
 
 import { authorizeRoles } from "../middlewares/authorizeRoles";
@@ -42,6 +43,14 @@ router.patch(
   authorizeRoles("admin", "receptionist"),
   validateIdParam("id"),
   updateBookingStatus
+);
+
+// move room (dedicated endpoint)
+router.patch(
+  "/:id/move-room",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("id"),
+  moveBookingRoom
 );
 
 // delete admin only

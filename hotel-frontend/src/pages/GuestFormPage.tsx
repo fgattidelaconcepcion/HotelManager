@@ -15,11 +15,18 @@ interface GuestFormState {
   name: string;
   email: string;
   phone: string;
-  documentNumber: string;
-  address: string;
 
-  // Here I add nationality as requested (used by police report / guest profile).
+  // Identity fields (used by police report snapshots)
+  documentType: string;
+  documentNumber: string;
   nationality: string;
+  birthDate: string; // YYYY-MM-DD
+  gender: string;
+
+  // Address fields
+  address: string;
+  city: string;
+  country: string;
 }
 
 /**
@@ -29,9 +36,16 @@ const emptyForm: GuestFormState = {
   name: "",
   email: "",
   phone: "",
+
+  documentType: "",
   documentNumber: "",
-  address: "",
   nationality: "",
+  birthDate: "",
+  gender: "",
+
+  address: "",
+  city: "",
+  country: "",
 };
 
 /**
@@ -51,18 +65,18 @@ function mapApiError(err: unknown) {
 }
 
 /**
- * GuestFormPage
- * - If I have an :id param => edit mode (PUT /guests/:id)
- * - If I don't have :id => create mode (POST /guests)
- *
- * Professional UX decisions I apply:
- * - I make Name required (already required in backend).
- * - I keep Nationality optional by default, but I strongly encourage it:
- *   it is important for police report / record completeness.
- *   (If you want it required, I can enforce it with a 2-line change.)
- * - I keep validation errors inline + I show a toast.
- * - I disable inputs while saving.
+ * Here I parse a date string and return ISO DateTime or null.
+ * I store birthDate in DB as DateTime, but the form uses YYYY-MM-DD.
  */
+function toIsoDateOrNull(dateStr: string) {
+  const d = dateStr.trim();
+  if (!d) return null;
+  // Here I force UTC noon to avoid timezone shifting issues.
+  const iso = new Date(`${d}T12:00:00.000Z`);
+  if (Number.isNaN(iso.getTime())) return null;
+  return iso.toISOString();
+}
+
 export default function GuestFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -100,26 +114,26 @@ export default function GuestFormPage() {
       setLoadingGuest(true);
       setError(null);
 
-      // Here I fetch the guest data from the API.
       const res = await api.get(`/guests/${guestId}`);
-
-      // Here I support both response shapes:
-      // - { success: true, data: guest }
-      // - { guest: ... }
-      // - or directly guest
       const guest = res.data?.guest ?? res.data?.data ?? res.data;
 
-      // Here I hydrate my form state with the guest fields.
-      // I default to "" for inputs to avoid uncontrolled warnings.
+      // Here I hydrate the form state with safe fallbacks.
       setForm({
         name: guest?.name ?? "",
         email: guest?.email ?? "",
         phone: guest?.phone ?? "",
-        documentNumber: guest?.documentNumber ?? "",
-        address: guest?.address ?? "",
 
-        // ✅ Here I load nationality into the form.
+        documentType: guest?.documentType ?? "",
+        documentNumber: guest?.documentNumber ?? "",
         nationality: guest?.nationality ?? "",
+
+        // Here I convert ISO DateTime -> YYYY-MM-DD for <input type="date">
+        birthDate: guest?.birthDate ? String(guest.birthDate).slice(0, 10) : "",
+        gender: guest?.gender ?? "",
+
+        address: guest?.address ?? "",
+        city: guest?.city ?? "",
+        country: guest?.country ?? "",
       });
     } catch (err) {
       setError(mapApiError(err));
@@ -146,7 +160,6 @@ export default function GuestFormPage() {
    * Here I validate the form before sending to the API.
    * - Name is required
    * - Email format is validated if provided
-   * - Nationality is optional (professional default), but recommended
    */
   const validateForm = () => {
     const name = form.name.trim();
@@ -162,13 +175,6 @@ export default function GuestFormPage() {
       return false;
     }
 
-    // If you want Nationality required, uncomment the following:
-    // const nationality = form.nationality.trim();
-    // if (!nationality) {
-    //   setError("Nationality is required.");
-    //   return false;
-    // }
-
     setError(null);
     return true;
   };
@@ -182,7 +188,7 @@ export default function GuestFormPage() {
     e.preventDefault();
 
     if (!validateForm()) {
-      toast.warning(error ?? "Please review the form.");
+      toast.warning("Please review the form.");
       return;
     }
 
@@ -193,11 +199,18 @@ export default function GuestFormPage() {
 
     if (form.email.trim()) payload.email = form.email.trim();
     if (form.phone.trim()) payload.phone = form.phone.trim();
-    if (form.documentNumber.trim()) payload.documentNumber = form.documentNumber.trim();
-    if (form.address.trim()) payload.address = form.address.trim();
 
-    // ✅ Here I include nationality if provided.
+    if (form.documentType.trim()) payload.documentType = form.documentType.trim();
+    if (form.documentNumber.trim()) payload.documentNumber = form.documentNumber.trim();
     if (form.nationality.trim()) payload.nationality = form.nationality.trim();
+    if (form.gender.trim()) payload.gender = form.gender.trim();
+
+    if (form.address.trim()) payload.address = form.address.trim();
+    if (form.city.trim()) payload.city = form.city.trim();
+    if (form.country.trim()) payload.country = form.country.trim();
+
+    const birthDateIso = toIsoDateOrNull(form.birthDate);
+    if (birthDateIso) payload.birthDate = birthDateIso;
 
     try {
       setLoading(true);
@@ -211,13 +224,10 @@ export default function GuestFormPage() {
         toast.success("Guest created successfully");
       }
 
-      // Here I return to the guests list after a successful save.
       navigate("/guests");
     } catch (err) {
       const message = mapApiError(err);
       toast.error(message);
-
-      // Here I also show the error inline for better UX.
       setError(message);
     } finally {
       setLoading(false);
@@ -245,106 +255,170 @@ export default function GuestFormPage() {
         }
       />
 
-      {/* Here I show inline errors when they exist (validation or load issues). */}
       {error && (
         <Card>
           <CardBody>
-            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">{error}</div>
+            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
+              {error}
+            </div>
           </CardBody>
         </Card>
       )}
 
       <Card>
         <CardBody>
-          {/* Here I show a small loading message while I fetch the guest on edit mode. */}
           {loadingGuest && isEdit ? (
             <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
+            <form onSubmit={handleSubmit} className="space-y-4 max-w-2xl">
               <p className="text-xs text-slate-500">Fields marked with * are required.</p>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Name *</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => handleChange("name", e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="e.g., John Doe"
-                  disabled={loading}
-                  autoComplete="name"
-                />
+              {/* BASIC */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Name *</label>
+                  <input
+                    type="text"
+                    value={form.name}
+                    onChange={(e) => handleChange("name", e.target.value)}
+                    className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                    disabled={loading}
+                    autoComplete="name"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => handleChange("email", e.target.value)}
+                    className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                    disabled={loading}
+                    autoComplete="email"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Phone</label>
+                  <input
+                    type="text"
+                    value={form.phone}
+                    onChange={(e) => handleChange("phone", e.target.value)}
+                    className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                    disabled={loading}
+                    autoComplete="tel"
+                  />
+                </div>
               </div>
 
-              {/* ✅ Here I add Nationality for a more complete guest profile and police report needs. */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Nationality</label>
-                <input
-                  type="text"
-                  value={form.nationality}
-                  onChange={(e) => handleChange("nationality", e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="e.g., Uruguayan"
-                  disabled={loading}
-                  autoComplete="country-name"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  I recommend filling this in for better reporting and record completeness.
-                </p>
+              {/* IDENTITY */}
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-gray-800">Identity (for police report)</h3>
+                <div className="grid gap-4 md:grid-cols-2 mt-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Document type</label>
+                    <input
+                      type="text"
+                      value={form.documentType}
+                      onChange={(e) => handleChange("documentType", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      placeholder="e.g., ID / Passport"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Document number</label>
+                    <input
+                      type="text"
+                      value={form.documentNumber}
+                      onChange={(e) => handleChange("documentNumber", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Nationality</label>
+                    <input
+                      type="text"
+                      value={form.nationality}
+                      onChange={(e) => handleChange("nationality", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      placeholder="e.g., Uruguayan"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Birth date</label>
+                    <input
+                      type="date"
+                      value={form.birthDate}
+                      onChange={(e) => handleChange("birthDate", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Gender</label>
+                    <input
+                      type="text"
+                      value={form.gender}
+                      onChange={(e) => handleChange("gender", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      placeholder="e.g., Male / Female"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => handleChange("email", e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="e.g., john@example.com"
-                  disabled={loading}
-                  autoComplete="email"
-                />
+              {/* ADDRESS */}
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-gray-800">Address</h3>
+                <div className="grid gap-4 md:grid-cols-2 mt-3">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700">Address</label>
+                    <input
+                      type="text"
+                      value={form.address}
+                      onChange={(e) => handleChange("address", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      autoComplete="street-address"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">City</label>
+                    <input
+                      type="text"
+                      value={form.city}
+                      onChange={(e) => handleChange("city", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      autoComplete="address-level2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Country</label>
+                    <input
+                      type="text"
+                      value={form.country}
+                      onChange={(e) => handleChange("country", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      autoComplete="country-name"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Phone</label>
-                <input
-                  type="text"
-                  value={form.phone}
-                  onChange={(e) => handleChange("phone", e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="e.g., +598 99 123 456"
-                  disabled={loading}
-                  autoComplete="tel"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Document</label>
-                <input
-                  type="text"
-                  value={form.documentNumber}
-                  onChange={(e) => handleChange("documentNumber", e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="e.g., ID 4.123.456-7"
-                  disabled={loading}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Address</label>
-                <input
-                  type="text"
-                  value={form.address}
-                  onChange={(e) => handleChange("address", e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2 text-sm"
-                  placeholder="e.g., Evergreen Ave 1234"
-                  disabled={loading}
-                  autoComplete="street-address"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 mt-4">
+              <div className="flex justify-end gap-2 mt-6">
                 <Button type="button" variant="ghost" onClick={handleCancel} disabled={loading}>
                   Cancel
                 </Button>

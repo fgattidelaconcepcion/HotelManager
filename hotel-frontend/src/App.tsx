@@ -1,7 +1,6 @@
 import React from "react";
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
-
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -13,17 +12,14 @@ import Reservations from "./pages/Reservations";
 import ReservationFormPage from "./pages/ReservationFormPage";
 import ReservationDetailPage from "./pages/ReservationDetailPage";
 import Payments from "./pages/Payments";
-
 import RoomTypes from "./pages/RoomTypes";
 import ChargesPage from "./pages/ChargesPage";
 import PoliceReportPage from "./pages/PoliceReportPage";
-
-// Here I import the admin employees page
 import Employees from "./pages/admin/Employees";
-
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout/Layout";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import PlanningPage from "./pages/PlanningPage";
 
 function Forbidden() {
   return (
@@ -68,6 +64,13 @@ const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Home /> },
+
+      // planning page 
+     { path: "planning", element: <PlanningPage /> },
+
+// ...
+{ path: "planning", element: <PlanningPage /> },
+
 
       { path: "rooms", element: <Rooms /> },
       { path: "rooms/new", element: <RoomFormPage /> },

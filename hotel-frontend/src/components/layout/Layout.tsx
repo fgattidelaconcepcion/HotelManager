@@ -27,21 +27,14 @@ export default function Layout() {
   const navItems: NavItem[] = useMemo(
     () => [
       { to: "/", label: "Dashboard", exact: true, roles: ["admin", "receptionist"] },
+      { to: "/planning", label: "Planning", roles: ["admin", "receptionist"] },
       { to: "/rooms", label: "Rooms", roles: ["admin", "receptionist"] },
-
       { to: "/room-types", label: "Room Types", roles: ["admin"] },
-
       { to: "/guests", label: "Guests", roles: ["admin", "receptionist"] },
       { to: "/reservations", label: "Reservations", roles: ["admin", "receptionist"] },
-
       { to: "/payments", label: "Payments", roles: ["admin", "receptionist"] },
-
-      
       { to: "/charges", label: "Charges", roles: ["admin", "receptionist"] },
-
-     
       { to: "/police-report", label: "Police report", roles: ["admin", "receptionist"] },
-
       { to: "/admin/employees", label: "Employees", roles: ["admin"] },
     ],
     []

@@ -47,7 +47,7 @@ interface Booking {
   status: BookingStatus | string;
 
   /**
-   * ✅ Here I support enriched fields returned by backend.
+   * Here I support enriched fields returned by backend.
    * If they exist, I will use them to compute Paid/Due including charges.
    */
   paidCompleted?: number;
@@ -60,6 +60,94 @@ interface Payment {
   bookingId: number;
   amount: number;
   status: PaymentStatus;
+}
+
+/**
+ * ===========================
+ *  CONFIRM MODAL (PRO UX)
+ * ===========================
+ * Here I replace window.confirm() with a styled modal:
+ * - consistent UI
+ * - smooth animation
+ * - optional loading state
+ */
+function ConfirmModal({
+  open,
+  title,
+  description,
+  confirmText = "Confirm",
+  cancelText = "Cancel",
+  loading,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  description?: string;
+  confirmText?: string;
+  cancelText?: string;
+  loading?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        onClick={loading ? undefined : onCancel}
+      />
+
+      {/* Modal */}
+      <div className="absolute inset-0 flex items-center justify-center px-4">
+        <div
+          className={[
+            "w-full max-w-md rounded-xl border bg-white shadow-xl",
+            "transform transition-all duration-200",
+            "animate-[modalIn_180ms_ease-out]",
+          ].join(" ")}
+        >
+          <div className="p-4 border-b">
+            <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+
+            {description && (
+              <p className="text-sm text-slate-600 mt-1">{description}</p>
+            )}
+          </div>
+
+          <div className="p-4 flex justify-end gap-2">
+            <button
+              type="button"
+              className="text-sm px-4 py-2 rounded-lg border bg-white hover:bg-slate-50 transition disabled:opacity-60"
+              onClick={onCancel}
+              disabled={!!loading}
+            >
+              {cancelText}
+            </button>
+
+            <button
+              type="button"
+              className="text-sm px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition disabled:opacity-60"
+              onClick={onConfirm}
+              disabled={!!loading}
+            >
+              {loading ? "Please wait..." : confirmText}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Keyframes (inline so you don't need Tailwind config changes) */}
+      <style>{`
+        @keyframes modalIn {
+          from { opacity: 0; transform: translateY(6px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
+    </div>
+  );
 }
 
 /**
@@ -139,7 +227,19 @@ export default function Reservations() {
   // Here I store a local error banner message (so I avoid duplicate global toasts).
   const [error, setError] = useState<string | null>(null);
 
+  // Here I track which booking is being updated (for button loading states).
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+
+  /**
+   *  Here I store the "confirm action" request.
+   * This replaces window.confirm() with a professional modal UI.
+   */
+  const [confirm, setConfirm] = useState<null | {
+    bookingId: number;
+    next: BookingStatus;
+    title: string;
+    description?: string;
+  }>(null);
 
   const formatDate = (value: string) => {
     try {
@@ -258,8 +358,11 @@ export default function Reservations() {
     const map = new Map<number, { paid: number; due: number }>();
 
     for (const b of bookings) {
-      // ✅ Best: use backend enriched values (already includes charges).
-      if (typeof b.paidCompleted === "number" && typeof b.dueAmount === "number") {
+      //  Best: use backend enriched values (already includes charges).
+      if (
+        typeof b.paidCompleted === "number" &&
+        typeof b.dueAmount === "number"
+      ) {
         map.set(b.id, { paid: b.paidCompleted, due: b.dueAmount });
         continue;
       }
@@ -269,7 +372,8 @@ export default function Reservations() {
         .filter((p) => p.bookingId === b.id && p.status === "completed")
         .reduce((sum, p) => sum + p.amount, 0);
 
-      const due = b.totalPrice != null ? Math.max((b.totalPrice ?? 0) - paid, 0) : 0;
+      const due =
+        b.totalPrice != null ? Math.max((b.totalPrice ?? 0) - paid, 0) : 0;
 
       map.set(b.id, { paid, due });
     }
@@ -357,15 +461,23 @@ export default function Reservations() {
   };
 
   /**
-   * Here I patch booking status.
+   * Here I open the confirmation modal instead of window.confirm().
+   * This makes the experience look modern and professional.
+   */
+  const requestStatusChange = (bookingId: number, next: BookingStatus) => {
+    setConfirm({
+      bookingId,
+      next,
+      title: `Confirm status change`,
+      description: `Are you sure you want to set booking #${bookingId} to "${next}"?`,
+    });
+  };
+
+  /**
+   * Here I patch booking status (real API call).
    * I set silentErrorToast=true because I show the banner with setError().
    */
   const updateStatus = async (bookingId: number, next: BookingStatus) => {
-    const ok = window.confirm(
-      `Are you sure you want to set booking #${bookingId} to "${next}"?`
-    );
-    if (!ok) return;
-
     try {
       setUpdatingId(bookingId);
       setError(null);
@@ -432,7 +544,9 @@ export default function Reservations() {
                 Total paid (completed payments)
               </p>
               <p className="text-lg font-semibold mt-1">
-                {loadingPayments ? "Loading..." : formatCurrency(totalPaidAllBookings)}
+                {loadingPayments
+                  ? "Loading..."
+                  : formatCurrency(totalPaidAllBookings)}
               </p>
             </div>
           </div>
@@ -579,7 +693,10 @@ export default function Reservations() {
                 {filteredBookings.map((booking) => {
                   const normalized = normalizeStatus(booking.status);
 
-                  const money = bookingMoneyMap.get(booking.id) ?? { paid: 0, due: 0 };
+                  const money = bookingMoneyMap.get(booking.id) ?? {
+                    paid: 0,
+                    due: 0,
+                  };
                   const totalPaid = money.paid;
                   const remaining = money.due;
 
@@ -629,7 +746,9 @@ export default function Reservations() {
                         {formatCurrency(remaining)}
                       </td>
                       <td className="px-4 py-2 align-top">
-                        <Badge variant={getBookingStatusVariant(booking.status)}>
+                        <Badge
+                          variant={getBookingStatusVariant(booking.status)}
+                        >
                           {getBookingStatusLabel(booking.status)}
                         </Badge>
                       </td>
@@ -656,7 +775,9 @@ export default function Reservations() {
                                 className="text-xs px-3 py-1"
                                 disabled={isUpdating || a.disabled}
                                 title={a.disabled ? a.disabledReason : undefined}
-                                onClick={() => updateStatus(booking.id, a.next)}
+                                onClick={() =>
+                                  requestStatusChange(booking.id, a.next)
+                                }
                               >
                                 {isUpdating ? "..." : a.label}
                               </Button>
@@ -707,6 +828,27 @@ export default function Reservations() {
           </div>
         </CardBody>
       </Card>
+
+      {/*  Confirmation modal (replaces window.confirm) */}
+      <ConfirmModal
+        open={!!confirm}
+        title={confirm?.title ?? ""}
+        description={confirm?.description}
+        confirmText="Accept"
+        cancelText="Cancel"
+        loading={!!confirm && updatingId === confirm.bookingId}
+        onCancel={() => setConfirm(null)}
+        onConfirm={async () => {
+          if (!confirm) return;
+
+          const { bookingId, next } = confirm;
+
+          // Here I close the modal first for a snappy UX.
+          setConfirm(null);
+
+          await updateStatus(bookingId, next);
+        }}
+      />
     </div>
   );
 }

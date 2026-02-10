@@ -1,19 +1,17 @@
 import { Router } from "express";
-
 import authController from "../controllers/auth.controller";
 import userController from "../controllers/userController";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { authorizeRoles } from "../middlewares/authorizeRoles";
-
 import paymentsRoutes from "./payments.routes";
 import roomsRoutes from "./rooms.routes";
 import bookingsRoutes from "./bookings.routes";
 import roomTypeRoutes from "./roomType.routes";
 import guestRoutes from "./guest.routes";
 import usersRoutes from "./users.routes";
-
 import chargesRoutes from "./charges.routes";
 import stayRegistrationRoutes from "./stayRegistration.routes";
+import planningRoutes from "./planning.routes";
 
 const router = Router();
 
@@ -59,6 +57,7 @@ router.use("/room-types", roomTypeRoutes);
 router.use("/guests", guestRoutes);
 router.use("/payments", paymentsRoutes);
 router.use("/users", usersRoutes);
+router.use("/planning", planningRoutes);
 
 /**
  * New modules:
