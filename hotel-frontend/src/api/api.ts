@@ -36,7 +36,6 @@ function getErrorMessage(error: any): string {
   const data = error?.response?.data;
   const code = data?.code as string | undefined;
 
-  // Here I support custom details (ex: BOOKING_HAS_DUE -> details.due)
   if (code === "BOOKING_HAS_DUE") {
     const due = data?.details?.due;
     if (typeof due === "number") {
@@ -52,18 +51,17 @@ function getErrorMessage(error: any): string {
 }
 
 /**
- *  Here I perform a safe sign-out without React hooks:
+ * Here I perform a safe sign-out without React hooks:
  * - I dispatch a global event so AuthProvider clears BOTH token and user
- * - I redirect to /login
- *
- * This keeps auth cleanup centralized in AuthContext (single source of truth).
+ * - I redirect to /login (but I avoid redirect loops)
  */
 function forceLogout() {
-  // Here I ask AuthProvider to clear state (token + user) via a global event.
   window.dispatchEvent(new CustomEvent("auth:forceLogout"));
 
-  // Here I keep the redirect simple and reliable.
-  window.location.href = "/login";
+  const path = window.location.pathname;
+  if (path !== "/login" && path !== "/signup") {
+    window.location.href = "/login";
+  }
 }
 
 /**
@@ -96,11 +94,7 @@ api.interceptors.request.use((config: any) => {
    */
   if (!config?.silentLoading) {
     activeRequests += 1;
-
-    // Here I only start NProgress when the first request begins
-    if (activeRequests === 1) {
-      NProgress.start();
-    }
+    if (activeRequests === 1) NProgress.start();
   }
 
   return config;
@@ -112,54 +106,48 @@ api.interceptors.request.use((config: any) => {
 
 api.interceptors.response.use(
   (response) => {
-    // Here I stop the loading bar when the request finishes successfully.
     stopProgressIfNeeded(response.config);
     return response;
   },
   (error) => {
     const cfg: any = error?.config;
 
-    // Here I stop the loading bar when a request fails.
     stopProgressIfNeeded(cfg);
 
     const status = error?.response?.status;
+    const url = String(cfg?.url ?? "");
 
     /**
-     *  Here I auto-logout if the backend says I'm unauthorized (401).
-     * This usually means the token expired/invalid or the user is not authenticated.
+     *  KEY FIX:
+     * - I do NOT auto-logout for auth endpoints (login/register)
+     * - I also allow callers to opt-out with ignoreAuthRedirect
      */
+    const isAuthEndpoint =
+      url.includes("/auth/login") ||
+      url.includes("/auth/register") ||
+      url.includes("/auth/register-hotel") ||
+      url.includes("/auth/me");
+
     if (status === 401) {
-      // Here I avoid noisy toasts for 401 because I'm redirecting anyway.
-      // Also, I only logout if the request was not explicitly marked to ignore auth handling.
-      if (!cfg?.ignoreAuthRedirect) {
+      if (!cfg?.ignoreAuthRedirect && !isAuthEndpoint) {
         toast.error("Session expired. Please log in again.");
         forceLogout();
         return Promise.reject(error);
       }
+
+      // For auth endpoints, I let the page handle the message
+      return Promise.reject(error);
     }
 
-    /**
-     * Optional: for 403 I usually show "not allowed" (no logout).
-     * This means authenticated but missing role/permissions.
-     */
     if (status === 403 && !cfg?.silentErrorToast) {
       toast.error("You don’t have permission to perform this action.");
       return Promise.reject(error);
     }
 
-    /**
-     * Here I show a global error toast unless it is explicitly disabled.
-     *
-     * Important:
-     * - For pages that render their own inline error banner (like Reservations),
-     *   you should call the request with { silentErrorToast: true }
-     *   so you don't show duplicate messages.
-     */
     if (!cfg?.silentErrorToast) {
       toast.error(getErrorMessage(error));
     }
 
-    // Here I propagate the error so it can still be handled locally if needed.
     return Promise.reject(error);
   }
 );

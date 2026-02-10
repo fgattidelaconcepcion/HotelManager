@@ -28,9 +28,7 @@ export default function Login() {
    * Here I store form state and I remember the last used hotelCode.
    * This makes repeated testing and real usage faster.
    */
-  const [hotelCode, setHotelCode] = useState(
-    () => localStorage.getItem("hotelCode") || ""
-  );
+  const [hotelCode, setHotelCode] = useState(() => localStorage.getItem("hotelCode") || "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -84,8 +82,9 @@ export default function Login() {
 
     try {
       /**
-       * Here I silence the global error toast for login.
-       * I want login errors to appear only inside this form.
+       * ✅ Important:
+       * - silentErrorToast: I don't want global toasts for login errors
+       * - ignoreAuthRedirect: prevents the Axios interceptor from force-logout on 401 during login
        */
       const res = await api.post<LoginResponse>(
         "/auth/login",
@@ -94,7 +93,7 @@ export default function Login() {
           email: email.trim(),
           password,
         },
-        { silentErrorToast: true } as any
+        { silentErrorToast: true, ignoreAuthRedirect: true } as any
       );
 
       const token = res.data?.token;
@@ -196,13 +195,9 @@ export default function Login() {
             </Button>
           </form>
 
-          {/* Here I add a clear CTA to create a new hotel */}
           <p className="mt-4 text-center text-sm text-slate-600">
             I don’t have a hotel yet?{" "}
-            <Link
-              to="/signup"
-              className="font-medium text-blue-600 hover:underline"
-            >
+            <Link to="/signup" className="font-medium text-blue-600 hover:underline">
               Create one
             </Link>
           </p>

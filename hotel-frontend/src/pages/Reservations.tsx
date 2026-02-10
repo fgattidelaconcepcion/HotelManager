@@ -45,6 +45,14 @@ interface Booking {
   checkOut: string;
   totalPrice: number;
   status: BookingStatus | string;
+
+  /**
+   * ✅ Here I support enriched fields returned by backend.
+   * If they exist, I will use them to compute Paid/Due including charges.
+   */
+  paidCompleted?: number;
+  chargesTotal?: number;
+  dueAmount?: number;
 }
 
 interface Payment {
@@ -78,11 +86,14 @@ function mapApiError(err: any): string {
     // Here I show a clear message when backend blocks check-out due to outstanding balance.
     case "BOOKING_HAS_DUE":
       return typeof due === "number"
-        ? `Cannot check-out. Outstanding balance: ${new Intl.NumberFormat("en-UY", {
-            style: "currency",
-            currency: "UYU",
-            minimumFractionDigits: 0,
-          }).format(due)}`
+        ? `Cannot check-out. Outstanding balance: ${new Intl.NumberFormat(
+            "en-UY",
+            {
+              style: "currency",
+              currency: "UYU",
+              minimumFractionDigits: 0,
+            }
+          ).format(due)}`
         : "Cannot check-out while there is an outstanding balance.";
 
     default:
@@ -170,8 +181,8 @@ export default function Reservations() {
   };
 
   /**
-   * Here I load payments so I can compute paid/due amounts per booking.
-   * I also set silentErrorToast=true to avoid duplicate global toasts.
+   * Here I load payments so I can compute paid amounts per booking
+   * when backend does not provide paidCompleted/dueAmount.
    */
   const loadPayments = async () => {
     try {
@@ -186,7 +197,6 @@ export default function Reservations() {
     } catch (err) {
       console.error("Error loading payments for reservations", err);
       // Here I do not block the whole page if payments fail; bookings can still render.
-      // If you want, we can also show a small warning banner just for payments.
     } finally {
       setLoadingPayments(false);
     }
@@ -227,6 +237,11 @@ export default function Reservations() {
   };
 
   const totalBookings = bookings.length;
+
+  /**
+   * Here I keep "total revenue" based on base booking totals.
+   * If later you want "total revenue including charges", tell me and I’ll adjust it.
+   */
   const totalRevenue = bookings.reduce((sum, b) => sum + (b.totalPrice ?? 0), 0);
 
   const totalPaidAllBookings = payments
@@ -235,21 +250,26 @@ export default function Reservations() {
 
   /**
    * Here I build a helper map: bookingId -> { paid, due }.
-   * I do this once so I can reuse it in:
-   * - filters
-   * - table rows
-   * - disabling Check-out when there is due amount
+   * Priority:
+   * 1) If backend provides dueAmount/paidCompleted => I use them (includes charges).
+   * 2) Otherwise I fallback to payments-based calculation (legacy mode).
    */
   const bookingMoneyMap = useMemo(() => {
     const map = new Map<number, { paid: number; due: number }>();
 
     for (const b of bookings) {
+      // ✅ Best: use backend enriched values (already includes charges).
+      if (typeof b.paidCompleted === "number" && typeof b.dueAmount === "number") {
+        map.set(b.id, { paid: b.paidCompleted, due: b.dueAmount });
+        continue;
+      }
+
+      // Fallback: compute from payments only (does NOT include charges).
       const paid = payments
         .filter((p) => p.bookingId === b.id && p.status === "completed")
         .reduce((sum, p) => sum + p.amount, 0);
 
-      const due =
-        b.totalPrice != null ? Math.max((b.totalPrice ?? 0) - paid, 0) : 0;
+      const due = b.totalPrice != null ? Math.max((b.totalPrice ?? 0) - paid, 0) : 0;
 
       map.set(b.id, { paid, due });
     }
@@ -327,7 +347,8 @@ export default function Reservations() {
           next: "checked_out",
           variant: "secondary",
           disabled: due > 0,
-          disabledReason: due > 0 ? `Outstanding balance: ${formatCurrency(due)}` : undefined,
+          disabledReason:
+            due > 0 ? `Outstanding balance: ${formatCurrency(due)}` : undefined,
         },
       ];
     }
@@ -411,9 +432,7 @@ export default function Reservations() {
                 Total paid (completed payments)
               </p>
               <p className="text-lg font-semibold mt-1">
-                {loadingPayments
-                  ? "Loading..."
-                  : formatCurrency(totalPaidAllBookings)}
+                {loadingPayments ? "Loading..." : formatCurrency(totalPaidAllBookings)}
               </p>
             </div>
           </div>
@@ -560,9 +579,7 @@ export default function Reservations() {
                 {filteredBookings.map((booking) => {
                   const normalized = normalizeStatus(booking.status);
 
-                  const money =
-                    bookingMoneyMap.get(booking.id) ?? { paid: 0, due: 0 };
-
+                  const money = bookingMoneyMap.get(booking.id) ?? { paid: 0, due: 0 };
                   const totalPaid = money.paid;
                   const remaining = money.due;
 
@@ -612,9 +629,7 @@ export default function Reservations() {
                         {formatCurrency(remaining)}
                       </td>
                       <td className="px-4 py-2 align-top">
-                        <Badge
-                          variant={getBookingStatusVariant(booking.status)}
-                        >
+                        <Badge variant={getBookingStatusVariant(booking.status)}>
                           {getBookingStatusLabel(booking.status)}
                         </Badge>
                       </td>
@@ -655,9 +670,7 @@ export default function Reservations() {
                           type="button"
                           variant="ghost"
                           className="text-xs px-3 py-1"
-                          onClick={() =>
-                            navigate(`/reservations/${booking.id}`)
-                          }
+                          onClick={() => navigate(`/reservations/${booking.id}`)}
                         >
                           View details
                         </Button>

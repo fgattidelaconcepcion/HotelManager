@@ -6,6 +6,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import RoleGate from "../auth/RoleGate";
 
 type PaymentStatus = "pending" | "completed" | "failed";
 type BookingStatus =
@@ -44,6 +45,13 @@ interface Booking {
   status: BookingStatus | string;
   createdAt?: string;
   updatedAt?: string;
+
+  /**
+   * ✅ Here I support enriched amounts from backend (includes charges).
+   */
+  paidCompleted?: number;
+  chargesTotal?: number;
+  dueAmount?: number;
 }
 
 interface Payment {
@@ -83,12 +91,16 @@ function mapApiError(err: any): string {
       return "Check-out must be after check-in.";
     case "BOOKING_LOCKED":
       return "This reservation can’t be edited in its current status.";
+    case "BOOKING_HAS_DUE":
+      return "Cannot check-out while there is an outstanding balance.";
     default:
       return serverMsg || "Something went wrong. Please try again.";
   }
 }
 
-
+/**
+ * Here I define allowed booking status transitions.
+ */
 const transitions: Record<BookingStatus, BookingStatus[]> = {
   pending: ["confirmed", "cancelled"],
   confirmed: ["checked_in", "cancelled"],
@@ -96,6 +108,20 @@ const transitions: Record<BookingStatus, BookingStatus[]> = {
   checked_out: [],
   cancelled: [],
 };
+
+/**
+ * Here I force a "real file download" from a Blob response.
+ */
+function downloadBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
 
 export default function ReservationDetailPage() {
   const { id } = useParams();
@@ -107,6 +133,11 @@ export default function ReservationDetailPage() {
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // ✅ NEW: extra actions loading
+  const [downloadingPolicePdf, setDownloadingPolicePdf] = useState(false);
+  const [creatingStayReg, setCreatingStayReg] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
 
   const bookingIdNumber = id ? Number(id) : NaN;
@@ -147,13 +178,11 @@ export default function ReservationDetailPage() {
 
   const getBookingStatusVariant = (status: string) => {
     const lower = status.toLowerCase();
-
     if (lower === "pending") return "warning";
     if (lower === "confirmed") return "default";
     if (lower === "cancelled" || lower === "canceled") return "danger";
     if (lower === "checked_in") return "success";
     if (lower === "checked_out") return "default";
-
     return "default";
   };
 
@@ -241,14 +270,24 @@ export default function ReservationDetailPage() {
     [booking]
   );
 
-  const isLocked = normalizedStatus === "checked_out" || normalizedStatus === "cancelled";
+  const isLocked =
+    normalizedStatus === "checked_out" || normalizedStatus === "cancelled";
 
   const totalPaid = payments
     .filter((p) => p.status === "completed")
     .reduce((sum, p) => sum + p.amount, 0);
 
   const totalPrice = booking?.totalPrice ?? 0;
-  const remaining = totalPrice - totalPaid;
+
+  /**
+   * ✅ Here I compute remaining due:
+   * - If backend provides dueAmount => I use it (includes charges).
+   * - Else I fallback to legacy (totalPrice - paid).
+   */
+  const remaining =
+    typeof booking?.dueAmount === "number"
+      ? booking.dueAmount
+      : Math.max(totalPrice - totalPaid, 0);
 
   let paymentStatusLabel = "No payments";
   let paymentStatusVariant: "success" | "warning" | "danger" = "danger";
@@ -275,14 +314,75 @@ export default function ReservationDetailPage() {
 
   const handleGoToEdit = () => {
     if (!booking) return;
-    
     navigate(`/reservations/${booking.id}/edit`);
+  };
+
+  /**
+   * ✅ NEW: Here I navigate to the police report page.
+   */
+  const handleGoToPoliceReport = () => {
+    navigate("/police-report");
+  };
+
+  /**
+   * ✅ NEW: Here I download the printable police report PDF.
+   * This is a global report (not only this booking), and it will contain
+   * stay registrations created on check-in (or created manually).
+   *
+   * Admin only (matches backend authorization).
+   */
+  const handleDownloadPolicePdf = async () => {
+    try {
+      setDownloadingPolicePdf(true);
+      setError(null);
+
+      const res = await api.get("/reports/police/pdf", {
+        responseType: "blob",
+      } as any);
+
+      downloadBlob(res.data, "police-report.pdf");
+    } catch (err: any) {
+      console.error("Error downloading police PDF", err);
+      setError(mapApiError(err));
+    } finally {
+      setDownloadingPolicePdf(false);
+    }
+  };
+
+  /**
+   * ✅ NEW: Here I create the stay registration snapshot for THIS booking.
+   * This is useful if you want to generate the police report even before you automate it.
+   *
+   * admin + receptionist (matches backend authorization).
+   */
+  const handleCreateStayRegistration = async () => {
+    if (!booking) return;
+
+    const ok = window.confirm(
+      `Create stay registration (police snapshot) for reservation #${booking.id}?`
+    );
+    if (!ok) return;
+
+    try {
+      setCreatingStayReg(true);
+      setError(null);
+
+      await api.post(`/bookings/${booking.id}/stay-registration`);
+
+      // I refresh the reservation/payments just to keep the UI consistent.
+      await refreshAll();
+    } catch (err: any) {
+      console.error("Error creating stay registration", err);
+      setError(mapApiError(err));
+    } finally {
+      setCreatingStayReg(false);
+    }
   };
 
   const handleDelete = async () => {
     if (!booking || !normalizedStatus) return;
 
-    
+    // Here I only allow delete for pending/cancelled.
     if (!(normalizedStatus === "pending" || normalizedStatus === "cancelled")) {
       setError("Only pending or cancelled reservations can be deleted.");
       return;
@@ -311,7 +411,6 @@ export default function ReservationDetailPage() {
   const handleChangeStatus = async (nextStatus: BookingStatus) => {
     if (!booking || !normalizedStatus) return;
 
-  
     const allowed = transitions[normalizedStatus]?.includes(nextStatus);
     if (!allowed) {
       setError(`Invalid status transition: ${normalizedStatus} → ${nextStatus}`);
@@ -390,7 +489,8 @@ export default function ReservationDetailPage() {
           type="button"
           variant="secondary"
           className="text-xs px-3 py-1"
-          disabled={updatingStatus}
+          disabled={updatingStatus || remaining > 0}
+          title={remaining > 0 ? "Outstanding balance must be paid first." : ""}
           onClick={() => handleChangeStatus("checked_out")}
         >
           Check-out
@@ -427,7 +527,10 @@ export default function ReservationDetailPage() {
   if (loading && !booking) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Reservation details" description="Loading reservation information..." />
+        <PageHeader
+          title="Reservation details"
+          description="Loading reservation information..."
+        />
         <Card>
           <CardBody>
             <p className="text-sm text-gray-500">Loading...</p>
@@ -466,7 +569,7 @@ export default function ReservationDetailPage() {
         title={`Reservation #${booking.id}`}
         description="Full reservation details."
         actions={
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button type="button" variant="ghost" onClick={handleGoBack}>
               Back to reservations
             </Button>
@@ -489,13 +592,52 @@ export default function ReservationDetailPage() {
               Edit
             </Button>
 
+            {/* ✅ NEW: Police report shortcuts */}
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleGoToPoliceReport}
+              title="Open Police report exports"
+            >
+              Police report (page)
+            </Button>
+
+            <RoleGate allowed={["admin"]}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleDownloadPolicePdf}
+                disabled={downloadingPolicePdf}
+                title="Download printable Police report PDF"
+              >
+                {downloadingPolicePdf ? "Downloading PDF..." : "Download police PDF"}
+              </Button>
+            </RoleGate>
+
+            <RoleGate allowed={["admin", "receptionist"]}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleCreateStayRegistration}
+                disabled={creatingStayReg}
+                title="Create the police snapshot for this reservation"
+              >
+                {creatingStayReg ? "Creating snapshot..." : "Create stay registration"}
+              </Button>
+            </RoleGate>
+
             <Button
               type="button"
               variant="danger"
               onClick={handleDelete}
-              disabled={deleting || !normalizedStatus || !(normalizedStatus === "pending" || normalizedStatus === "cancelled")}
+              disabled={
+                deleting ||
+                !normalizedStatus ||
+                !(normalizedStatus === "pending" || normalizedStatus === "cancelled")
+              }
               title={
-                normalizedStatus && !(normalizedStatus === "pending" || normalizedStatus === "cancelled")
+                normalizedStatus &&
+                !(normalizedStatus === "pending" || normalizedStatus === "cancelled")
                   ? "Only pending/cancelled reservations can be deleted."
                   : "Delete reservation"
               }
@@ -510,13 +652,14 @@ export default function ReservationDetailPage() {
         <Card>
           <CardBody>
             <div className="bg-amber-50 text-amber-900 px-4 py-2 rounded text-sm">
-              This reservation is <span className="font-semibold">{String(booking.status)}</span> and editing is locked.
+              This reservation is{" "}
+              <span className="font-semibold">{String(booking.status)}</span>{" "}
+              and editing is locked.
             </div>
           </CardBody>
         </Card>
       )}
 
-      {/* Main reservation data */}
       <Card>
         <CardBody>
           <div className="grid gap-4 md:grid-cols-2">
@@ -558,8 +701,10 @@ export default function ReservationDetailPage() {
                   {getBookingStatusLabel(booking.status as string)}
                 </Badge>
               </p>
+
+              {/* ✅ Here I show created/updated once (bug fix). */}
               <p className="text-xs text-gray-500">
-                Created: {formatDateTime(booking.createdAt)} | Last updated: {formatDateTime(booking.updatedAt)}
+                Created: {formatDateTime(booking.createdAt)} | Last updated:{" "}
                 {formatDateTime(booking.updatedAt)}
               </p>
 
@@ -569,7 +714,6 @@ export default function ReservationDetailPage() {
         </CardBody>
       </Card>
 
-      {/* Payments summary */}
       <Card>
         <CardBody>
           <h3 className="font-semibold text-gray-800 mb-3">Payments summary</h3>
@@ -593,9 +737,11 @@ export default function ReservationDetailPage() {
               </p>
             </div>
           </div>
+
           <div className="mt-3">
             <Badge variant={paymentStatusVariant}>{paymentStatusLabel}</Badge>
           </div>
+
           <div className="mt-4">
             <Button type="button" onClick={handleGoToAddPayment}>
               Add payment for this reservation
@@ -604,7 +750,6 @@ export default function ReservationDetailPage() {
         </CardBody>
       </Card>
 
-      {/* Payments list */}
       <Card>
         <CardBody>
           <h3 className="font-semibold text-gray-800 mb-3">Related payments</h3>
@@ -624,11 +769,21 @@ export default function ReservationDetailPage() {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">ID</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Amount</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Method</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Status</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Date</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">
+                      ID
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">
+                      Amount
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">
+                      Method
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">
+                      Status
+                    </th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">
+                      Date
+                    </th>
                   </tr>
                 </thead>
                 <tbody>

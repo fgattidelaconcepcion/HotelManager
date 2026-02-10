@@ -27,8 +27,7 @@ enum BookingStatus {
 }
 
 /**
- * Here I keep RoomStatus in Spanish because my frontend is already using these values.
- * I can refactor to English later, but I don't want to break existing UI today.
+ * Room status in Spanish (UI already uses these values)
  */
 enum RoomStatus {
   disponible
@@ -37,12 +36,19 @@ enum RoomStatus {
 }
 
 /**
+ * Charges categories (matches your Zod enum)
+ */
+enum ChargeCategory {
+  minibar
+  service
+  laundry
+  other
+}
+
+/**
  * ============================
- * MULTI-HOTEL (TENANT) MODEL
+ * HOTEL (TENANT)
  * ============================
- *
- * Here I introduce the Hotel model to support multi-tenant data isolation.
- * Every domain entity will point to exactly one Hotel via hotelId.
  */
 model Hotel {
   id        Int      @id @default(autoincrement())
@@ -55,6 +61,10 @@ model Hotel {
   rooms     Room[]
   guests    Guest[]
   bookings  Booking[]
+
+  // New modules
+  charges           Charge[]
+  stayRegistrations StayRegistration[]
 }
 
 /**
@@ -71,10 +81,13 @@ model User {
   role      UserRole @default(receptionist)
   createdAt DateTime @default(now())
 
-  hotel    Hotel    @relation(fields: [hotelId], references: [id])
+  hotel    Hotel     @relation(fields: [hotelId], references: [id])
   bookings Booking[]
 
-  // Here I make email unique per hotel (not globally).
+  // Opposite relations for auditing
+  createdCharges           Charge[]
+  createdStayRegistrations StayRegistration[]
+
   @@unique([hotelId, email])
 }
 
@@ -90,10 +103,9 @@ model RoomType {
   basePrice Float
   capacity  Int
 
-  hotel Hotel @relation(fields: [hotelId], references: [id])
+  hotel Hotel  @relation(fields: [hotelId], references: [id])
   rooms Room[]
 
-  // Here I make the room type name unique per hotel.
   @@unique([hotelId, name])
 }
 
@@ -115,7 +127,10 @@ model Room {
   roomType RoomType  @relation(fields: [roomTypeId], references: [id])
   bookings Booking[]
 
-  // Here I make room numbers unique per hotel.
+  // Opposites
+  charges           Charge[]
+  stayRegistrations StayRegistration[]
+
   @@unique([hotelId, number])
 }
 
@@ -125,22 +140,33 @@ model Room {
  * ============================
  */
 model Guest {
-  id             Int      @id @default(autoincrement())
-  hotelId        Int
-  name           String
-  email          String?
-  phone          String?
+  id      Int     @id @default(autoincrement())
+  hotelId Int
+  name    String
+  email   String?
+  phone   String?
 
-  documentNumber String?  @map("documentnumber")
+  // Existing
+  documentNumber String? @map("documentnumber")
   address        String?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  // ✅ Added to match your stayRegistration controller reads
+  documentType String?
+  nationality  String?
+  birthDate    DateTime?
+  gender       String?
+  city         String?
+  country      String?
 
-  hotel    Hotel    @relation(fields: [hotelId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hotel    Hotel     @relation(fields: [hotelId], references: [id])
   bookings Booking[]
 
-  // Here I make guest email unique per hotel (nullable unique works in SQLite).
+  // Opposite
+  stayRegistrations StayRegistration[]
+
   @@unique([hotelId, email])
 }
 
@@ -150,7 +176,7 @@ model Guest {
  * ============================
  */
 model Booking {
-  id         Int           @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   hotelId    Int
   userId     Int?
   guestId    Int?
@@ -159,12 +185,9 @@ model Booking {
   checkOut   DateTime
   totalPrice Float
 
-  status     BookingStatus @default(pending)
+  status    BookingStatus @default(pending)
   createdAt DateTime      @default(now())
 
-  // Here I store the real operational timestamps.
-  // This allows me to know when the guest actually checked in/out,
-  // not just the scheduled dates.
   checkedInAt  DateTime?
   checkedOutAt DateTime?
 
@@ -173,8 +196,14 @@ model Booking {
   user     User?     @relation(fields: [userId], references: [id])
   guest    Guest?    @relation(fields: [guestId], references: [id])
   payments Payment[]
-}
 
+  // New modules
+  charges          Charge[]
+  stayRegistration StayRegistration?
+
+  @@index([hotelId, roomId])
+  @@index([hotelId, guestId])
+}
 
 /**
  * ============================
@@ -183,11 +212,92 @@ model Booking {
  */
 model Payment {
   id        Int      @id @default(autoincrement())
-  booking   Booking  @relation(fields: [bookingId], references: [id])
   bookingId Int
   amount    Int
   method    String
   status    String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId])
+}
+
+/**
+ * ============================
+ * CHARGE (CONSUMPTION / EXTRAS)
+ * ============================
+ */
+model Charge {
+  id          Int  @id @default(autoincrement())
+  hotelId     Int
+  bookingId   Int
+  roomId      Int
+  createdById Int?
+
+  category    ChargeCategory @default(other)
+  description String
+  qty         Int            @default(1)
+  unitPrice   Int
+  total       Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hotel     Hotel   @relation(fields: [hotelId], references: [id])
+  booking   Booking @relation(fields: [bookingId], references: [id])
+  room      Room    @relation(fields: [roomId], references: [id])
+  createdBy User?   @relation(fields: [createdById], references: [id])
+
+  @@index([hotelId, bookingId])
+  @@index([hotelId, roomId])
+  @@index([createdById])
+}
+
+/**
+ * ============================
+ * STAY REGISTRATION (POLICE REPORT SNAPSHOT)
+ * ============================
+ */
+model StayRegistration {
+  id          Int  @id @default(autoincrement())
+  hotelId     Int
+  bookingId   Int  @unique
+  roomId      Int
+  guestId     Int?
+  createdById Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Snapshot identity (matches your controller)
+  guestName  String
+  guestEmail String?
+  guestPhone String?
+
+  nationality    String?
+  documentType   String?
+  documentNumber String?
+  birthDate      DateTime?
+  gender         String?
+  address        String?
+  city           String?
+  country        String?
+
+  // Snapshot stay dates (matches your controller)
+  scheduledCheckIn  DateTime
+  scheduledCheckOut DateTime
+  checkedInAt       DateTime?
+  checkedOutAt      DateTime?
+
+  hotel     Hotel   @relation(fields: [hotelId], references: [id])
+  booking   Booking @relation(fields: [bookingId], references: [id])
+  room      Room    @relation(fields: [roomId], references: [id])
+  guest     Guest?  @relation(fields: [guestId], references: [id])
+  createdBy User?   @relation(fields: [createdById], references: [id])
+
+  @@index([hotelId, roomId])
+  @@index([hotelId, guestId])
+  @@index([createdById])
 }

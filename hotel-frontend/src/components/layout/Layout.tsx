@@ -20,11 +20,6 @@ export default function Layout() {
   const location = useLocation();
   const { user, logout } = useAuth();
 
-  /**
-   * Here I read the last used hotelCode from localStorage.
-   * I use it as a lightweight way to display "which hotel I'm in" on the UI.
-   * (I can later replace this with a real /hotel endpoint if I want.)
-   */
   const hotelCode = useMemo(() => {
     return localStorage.getItem("hotelCode") || "";
   }, []);
@@ -34,24 +29,19 @@ export default function Layout() {
       { to: "/", label: "Dashboard", exact: true, roles: ["admin", "receptionist"] },
       { to: "/rooms", label: "Rooms", roles: ["admin", "receptionist"] },
 
-      /**
-       * ✅ Here I add Room Types so each hotel admin can create their own types.
-       * This is the missing piece that prevents "New room" from having options.
-       *
-       * I keep it admin-only because it affects base pricing & reporting.
-       * (Receptionist can still create rooms after types exist.)
-       */
       { to: "/room-types", label: "Room Types", roles: ["admin"] },
 
       { to: "/guests", label: "Guests", roles: ["admin", "receptionist"] },
       { to: "/reservations", label: "Reservations", roles: ["admin", "receptionist"] },
 
-      // Here I keep Payments visible to both roles
       { to: "/payments", label: "Payments", roles: ["admin", "receptionist"] },
 
-      /**
-       * Here I add an admin-only section to manage employees inside the hotel.
-       */
+      
+      { to: "/charges", label: "Charges", roles: ["admin", "receptionist"] },
+
+     
+      { to: "/police-report", label: "Police report", roles: ["admin", "receptionist"] },
+
       { to: "/admin/employees", label: "Employees", roles: ["admin"] },
     ],
     []
@@ -70,13 +60,11 @@ export default function Layout() {
     const path = location.pathname;
     if (path === "/" || path === "") return "Dashboard";
 
-    // Here I find a matching nav item by prefix, so /rooms/new still counts as "Rooms"
     const match = navItems.find((i) => i.to !== "/" && path.startsWith(i.to));
     return match?.label ?? "Dashboard";
   }, [location.pathname, navItems]);
 
   const handleLogout = () => {
-    // Here I clear auth state and send the user back to login
     logout();
     navigate("/login", { replace: true });
   };
@@ -92,8 +80,6 @@ export default function Layout() {
             </div>
             <div>
               <p className="text-sm font-semibold">Hotel Manager</p>
-
-              {/* Here I show a small hotel context label */}
               <p className="text-xs text-slate-400">
                 {hotelCode ? `Hotel: ${hotelCode}` : "Admin panel"}
               </p>

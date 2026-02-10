@@ -12,6 +12,9 @@ import roomTypeRoutes from "./roomType.routes";
 import guestRoutes from "./guest.routes";
 import usersRoutes from "./users.routes";
 
+import chargesRoutes from "./charges.routes";
+import stayRegistrationRoutes from "./stayRegistration.routes";
+
 const router = Router();
 
 /* =========================
@@ -56,5 +59,22 @@ router.use("/room-types", roomTypeRoutes);
 router.use("/guests", guestRoutes);
 router.use("/payments", paymentsRoutes);
 router.use("/users", usersRoutes);
+
+/**
+ * New modules:
+ * - Charges (consumption/extras)
+ * - Police stay registration + report export
+ *
+ * IMPORTANT:
+ * stayRegistrationRoutes contains routes like:
+ * - POST   /bookings/:id/stay-registration
+ * - GET    /reports/police              (CSV)
+ * - GET    /reports/police/pdf          (PDF list)
+ * - GET    /bookings/:id/stay-registration/pdf   ✅ (PDF single booking)
+ *
+ * So I mount it at "/" to keep those paths exactly as defined.
+ */
+router.use("/charges", chargesRoutes);
+router.use("/", stayRegistrationRoutes);
 
 export default router;

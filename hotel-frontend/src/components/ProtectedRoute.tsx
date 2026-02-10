@@ -21,7 +21,6 @@ export default function ProtectedRoute({
    */
   const { isAuthenticated, user, isAuthReady } = useAuth();
 
-  // Here I store the current location to support redirect after login.
   const location = useLocation();
 
   /**
@@ -36,30 +35,17 @@ export default function ProtectedRoute({
     );
   }
 
-  /**
-   * Here I redirect unauthenticated users to /login
-   * and preserve the original destination.
-   */
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  /**
-   * Here I guard against edge cases:
-   * If I'm authenticated but user is still null, I redirect to login.
-   */
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  /**
-   * Here I optionally enforce role-based access.
-   * If allowedRoles is provided, only those roles can enter.
-   */
   if (allowedRoles?.length && !allowedRoles.includes(user.role)) {
     return <Navigate to="/forbidden" replace />;
   }
 
-  // Here I render the protected content when all checks pass.
   return <>{children}</>;
 }

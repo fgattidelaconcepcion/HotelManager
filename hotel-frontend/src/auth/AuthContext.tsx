@@ -22,14 +22,11 @@ interface AuthContextValue {
   user: AuthUser | null;
 
   /**
-   * Here I expose a flag that tells the app when auth has finished bootstrapping
-   * from localStorage. This prevents redirecting to /login too early on refresh.
+   * Here I expose a ready flag so routes don't redirect to /login
+   * before the provider finishes loading localStorage on refresh.
    */
   isAuthReady: boolean;
 
-  /**
-   * Here I keep a convenient derived flag: true only when token + user exist.
-   */
   isAuthenticated: boolean;
 
   // Here I keep auth actions in one place to avoid scattered localStorage logic.
@@ -52,10 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
 
-  /**
-   * Here I track if I've already tried to restore auth from localStorage.
-   * This is the key to avoid redirecting to /login on page refresh.
-   */
+  // ✅ Here I track when localStorage bootstrapping finished
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   /**
@@ -78,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Here I mark auth as ready AFTER I read localStorage.
+    // ✅ Important: only after reading storage, I mark auth as ready
     setIsAuthReady(true);
   }, []);
 
@@ -100,7 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * PRO: Sync logout between browser tabs/windows.
+   *  PRO: Sync logout between browser tabs/windows.
    * If I logout in one tab, other tabs receive the storage event and logout too.
    */
   useEffect(() => {
@@ -122,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /**
-   * PRO: Allow non-React modules (api.ts) to force logout without hooks.
+   *  PRO: Allow non-React modules (api.ts) to force logout without hooks.
    * api.ts can dispatch: window.dispatchEvent(new CustomEvent("auth:forceLogout"))
    */
   useEffect(() => {

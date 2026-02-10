@@ -13,6 +13,8 @@ const nullableText = z.string().optional().or(z.literal("").transform(() => null
 /**
  * Here I validate guest creation with Zod.
  * I keep name required and allow the rest to be optional (nullable) fields.
+ *
+ *  I also include nationality because my DB model includes it and my UI uses it.
  */
 const guestSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -20,6 +22,9 @@ const guestSchema = z.object({
   phone: nullableText,
   documentNumber: nullableText,
   address: nullableText,
+
+  
+  nationality: nullableText,
 });
 
 // Here I reuse the same schema for updates but make everything optional
@@ -30,7 +35,7 @@ const updateGuestSchema = guestSchema.partial();
  * I ensure the field is not null before applying contains().
  */
 const nullableContains = (
-  field: "email" | "phone" | "documentNumber" | "address",
+  field: "email" | "phone" | "documentNumber" | "address" | "nationality",
   q: string
 ): Prisma.GuestWhereInput => ({
   AND: [
@@ -65,6 +70,7 @@ export const getAllGuests = async (req: AuthRequest, res: Response) => {
           nullableContains("phone", q),
           nullableContains("documentNumber", q),
           nullableContains("address", q),
+          nullableContains("nationality", q),
         ];
       }
     }
@@ -80,6 +86,8 @@ export const getAllGuests = async (req: AuthRequest, res: Response) => {
         phone: true,
         documentNumber: true,
         address: true,
+        nationality: true,
+
         createdAt: true,
         updatedAt: true,
       },
@@ -117,6 +125,8 @@ export const getGuestById = async (req: AuthRequest, res: Response) => {
         phone: true,
         documentNumber: true,
         address: true,
+        nationality: true,
+
         createdAt: true,
         updatedAt: true,
       },

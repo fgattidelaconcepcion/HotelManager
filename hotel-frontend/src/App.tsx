@@ -11,10 +11,12 @@ import Guests from "./pages/Guests";
 import GuestFormPage from "./pages/GuestFormPage";
 import Reservations from "./pages/Reservations";
 import ReservationFormPage from "./pages/ReservationFormPage";
+import ReservationDetailPage from "./pages/ReservationDetailPage";
 import Payments from "./pages/Payments";
 
-// ✅ NEW: Room Types UI
 import RoomTypes from "./pages/RoomTypes";
+import ChargesPage from "./pages/ChargesPage";
+import PoliceReportPage from "./pages/PoliceReportPage";
 
 // Here I import the admin employees page
 import Employees from "./pages/admin/Employees";
@@ -71,7 +73,7 @@ const router = createBrowserRouter([
       { path: "rooms/new", element: <RoomFormPage /> },
       { path: "rooms/:id", element: <RoomFormPage /> },
 
-      // ✅ NEW: room types page (view for both roles; create/edit/delete is admin-only inside the page)
+      // Room types
       { path: "room-types", element: <RoomTypes /> },
 
       { path: "guests", element: <Guests /> },
@@ -80,13 +82,24 @@ const router = createBrowserRouter([
 
       { path: "reservations", element: <Reservations /> },
       { path: "reservations/new", element: <ReservationFormPage /> },
-      { path: "reservations/:id", element: <ReservationFormPage /> },
+
+      //  Reservation detail (this was missing)
+      { path: "reservations/:id", element: <ReservationDetailPage /> },
+
+      //  Reservation edit (explicit)
+      { path: "reservations/:id/edit", element: <ReservationFormPage /> },
 
       // Payments both (admin + receptionist)
       { path: "payments", element: <Payments /> },
 
+      //  Charges (consumptions)
+      { path: "charges", element: <ChargesPage /> },
+
+      //  Police report CSV
+      { path: "police-report", element: <PoliceReportPage /> },
+
       /**
-       * Here I add the admin employees section.
+       * Admin employees section.
        * URL: /admin/employees
        */
       {
