@@ -1,5 +1,8 @@
 import puppeteer from "puppeteer";
 
+/**
+ * Here I convert HTML to a PDF Buffer using Puppeteer.
+ */
 export async function htmlToPdfBuffer(html: string) {
   const browser = await puppeteer.launch({
     headless: "new",

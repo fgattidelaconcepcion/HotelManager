@@ -47,7 +47,7 @@ interface Booking {
   updatedAt?: string;
 
   /**
-   * ✅ Here I support enriched amounts from backend (includes charges).
+   * Here I support enriched amounts from backend (includes charges).
    */
   paidCompleted?: number;
   chargesTotal?: number;
@@ -63,6 +63,9 @@ interface Payment {
   createdAt: string;
 }
 
+/**
+ * Here I normalize backend booking status to a safe union.
+ */
 function normalizeStatus(status: string): BookingStatus | null {
   const s = String(status || "").toLowerCase();
   if (
@@ -78,6 +81,9 @@ function normalizeStatus(status: string): BookingStatus | null {
   return null;
 }
 
+/**
+ * Here I map backend errors into user-friendly messages.
+ */
 function mapApiError(err: any): string {
   const code = err?.response?.data?.code as string | undefined;
   const serverMsg = err?.response?.data?.error as string | undefined;
@@ -134,9 +140,8 @@ export default function ReservationDetailPage() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // ✅ NEW: extra actions loading
-  const [downloadingPolicePdf, setDownloadingPolicePdf] = useState(false);
-  const [creatingStayReg, setCreatingStayReg] = useState(false);
+  //  Extra actions loading (only the useful ones)
+  const [downloadingStayRegPdf, setDownloadingStayRegPdf] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -218,6 +223,9 @@ export default function ReservationDetailPage() {
     return "danger";
   };
 
+  /**
+   * Here I load reservation details.
+   */
   const loadBooking = async () => {
     try {
       setLoading(true);
@@ -234,6 +242,9 @@ export default function ReservationDetailPage() {
     }
   };
 
+  /**
+   * Here I load related payments for this reservation.
+   */
   const loadPayments = async () => {
     try {
       setLoadingPayments(true);
@@ -250,6 +261,9 @@ export default function ReservationDetailPage() {
     }
   };
 
+  /**
+   * Here I refresh the whole page data.
+   */
   const refreshAll = async () => {
     await Promise.all([loadBooking(), loadPayments()]);
   };
@@ -280,7 +294,7 @@ export default function ReservationDetailPage() {
   const totalPrice = booking?.totalPrice ?? 0;
 
   /**
-   * ✅ Here I compute remaining due:
+   * Here I compute remaining due:
    * - If backend provides dueAmount => I use it (includes charges).
    * - Else I fallback to legacy (totalPrice - paid).
    */
@@ -318,71 +332,47 @@ export default function ReservationDetailPage() {
   };
 
   /**
-   * ✅ NEW: Here I navigate to the police report page.
+   * Here I navigate to the Police report exports page (date range exports).
    */
   const handleGoToPoliceReport = () => {
     navigate("/police-report");
   };
 
   /**
-   * ✅ NEW: Here I download the printable police report PDF.
-   * This is a global report (not only this booking), and it will contain
-   * stay registrations created on check-in (or created manually).
+   * 
+   * Here I download the stay registration PDF for THIS reservation only.
    *
-   * Admin only (matches backend authorization).
+   * Endpoint:
+   * GET /api/bookings/:id/stay-registration/pdf
+   *
+   * This is the best button to keep in the reservation detail page.
    */
-  const handleDownloadPolicePdf = async () => {
+  const handleDownloadStayRegistrationPdf = async () => {
+    if (!booking) return;
+
     try {
-      setDownloadingPolicePdf(true);
+      setDownloadingStayRegPdf(true);
       setError(null);
 
-      const res = await api.get("/reports/police/pdf", {
+      const res = await api.get(`/bookings/${booking.id}/stay-registration/pdf`, {
         responseType: "blob",
       } as any);
 
-      downloadBlob(res.data, "police-report.pdf");
+      downloadBlob(res.data, `stay-registration-${booking.id}.pdf`);
     } catch (err: any) {
-      console.error("Error downloading police PDF", err);
+      console.error("Error downloading stay registration PDF", err);
       setError(mapApiError(err));
     } finally {
-      setDownloadingPolicePdf(false);
+      setDownloadingStayRegPdf(false);
     }
   };
 
   /**
-   * ✅ NEW: Here I create the stay registration snapshot for THIS booking.
-   * This is useful if you want to generate the police report even before you automate it.
-   *
-   * admin + receptionist (matches backend authorization).
+   * Here I delete reservation (only pending/cancelled).
    */
-  const handleCreateStayRegistration = async () => {
-    if (!booking) return;
-
-    const ok = window.confirm(
-      `Create stay registration (police snapshot) for reservation #${booking.id}?`
-    );
-    if (!ok) return;
-
-    try {
-      setCreatingStayReg(true);
-      setError(null);
-
-      await api.post(`/bookings/${booking.id}/stay-registration`);
-
-      // I refresh the reservation/payments just to keep the UI consistent.
-      await refreshAll();
-    } catch (err: any) {
-      console.error("Error creating stay registration", err);
-      setError(mapApiError(err));
-    } finally {
-      setCreatingStayReg(false);
-    }
-  };
-
   const handleDelete = async () => {
     if (!booking || !normalizedStatus) return;
 
-    // Here I only allow delete for pending/cancelled.
     if (!(normalizedStatus === "pending" || normalizedStatus === "cancelled")) {
       setError("Only pending or cancelled reservations can be deleted.");
       return;
@@ -398,7 +388,6 @@ export default function ReservationDetailPage() {
       setError(null);
 
       await api.delete(`/bookings/${booking.id}`);
-
       navigate("/reservations");
     } catch (err: any) {
       console.error("Error deleting booking", err);
@@ -408,6 +397,9 @@ export default function ReservationDetailPage() {
     }
   };
 
+  /**
+   * Here I change reservation status (pending/confirmed/checkin/checkout...).
+   */
   const handleChangeStatus = async (nextStatus: BookingStatus) => {
     if (!booking || !normalizedStatus) return;
 
@@ -437,6 +429,9 @@ export default function ReservationDetailPage() {
     }
   };
 
+  /**
+   * Here I render the allowed status transition buttons.
+   */
   const renderStatusActions = () => {
     if (!booking || !normalizedStatus) return null;
 
@@ -587,12 +582,14 @@ export default function ReservationDetailPage() {
               variant="secondary"
               onClick={handleGoToEdit}
               disabled={isLocked}
-              title={isLocked ? "This reservation can’t be edited." : "Edit reservation"}
+              title={
+                isLocked ? "This reservation can’t be edited." : "Edit reservation"
+              }
             >
               Edit
             </Button>
 
-            {/* ✅ NEW: Police report shortcuts */}
+            {/* Police exports page (date range exports live there) */}
             <Button
               type="button"
               variant="secondary"
@@ -602,27 +599,18 @@ export default function ReservationDetailPage() {
               Police report (page)
             </Button>
 
-            <RoleGate allowed={["admin"]}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleDownloadPolicePdf}
-                disabled={downloadingPolicePdf}
-                title="Download printable Police report PDF"
-              >
-                {downloadingPolicePdf ? "Downloading PDF..." : "Download police PDF"}
-              </Button>
-            </RoleGate>
-
+            {/* Best/clear PDF for THIS reservation */}
             <RoleGate allowed={["admin", "receptionist"]}>
               <Button
                 type="button"
                 variant="secondary"
-                onClick={handleCreateStayRegistration}
-                disabled={creatingStayReg}
-                title="Create the police snapshot for this reservation"
+                onClick={handleDownloadStayRegistrationPdf}
+                disabled={downloadingStayRegPdf}
+                title="Download the police stay registration for this reservation"
               >
-                {creatingStayReg ? "Creating snapshot..." : "Create stay registration"}
+                {downloadingStayRegPdf
+                  ? "Downloading PDF..."
+                  : "Download stay registration PDF"}
               </Button>
             </RoleGate>
 
@@ -702,7 +690,7 @@ export default function ReservationDetailPage() {
                 </Badge>
               </p>
 
-              {/* ✅ Here I show created/updated once (bug fix). */}
+              {/* Here I show created/updated timestamps. */}
               <p className="text-xs text-gray-500">
                 Created: {formatDateTime(booking.createdAt)} | Last updated:{" "}
                 {formatDateTime(booking.updatedAt)}

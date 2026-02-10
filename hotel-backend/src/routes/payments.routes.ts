@@ -5,6 +5,7 @@ import {
   createPayment,
   updatePayment,
   deletePayment,
+  getBookingPaymentSummary,
 } from "../controllers/payments.controller";
 import { authorizeRoles } from "../middlewares/authorizeRoles";
 import { validateIdParam } from "../middlewares/validateIdParam";
@@ -16,6 +17,18 @@ const router = Router();
  * - receptionist: view/create/update
  * - admin: everything (including delete)
  */
+
+/**
+ * Here I expose a financial summary endpoint for one reservation.
+ * This is what the frontend uses to compute Due including charges.
+ */
+router.get(
+  "/booking/:bookingId/summary",
+  authorizeRoles("admin", "receptionist"),
+  validateIdParam("bookingId"),
+  getBookingPaymentSummary
+);
+
 router.get("/", authorizeRoles("admin", "receptionist"), getAllPayments);
 
 router.get(

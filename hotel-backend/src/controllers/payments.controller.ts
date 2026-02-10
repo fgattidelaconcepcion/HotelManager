@@ -54,6 +54,33 @@ async function getCompletedPaidForBooking(bookingId: number, excludePaymentId?: 
   return result._sum.amount ?? 0;
 }
 
+/**
+ *   Here I calculate the charges total for a booking.
+ * Charges live in their own table, so I sum Charge.total for this booking.
+ */
+async function getChargesTotalForBooking(bookingId: number) {
+  const result = await prisma.charge.aggregate({
+    where: { bookingId },
+    _sum: { total: true },
+  });
+
+  return result._sum.total ?? 0;
+}
+
+/**
+ *  Here I compute a "grand total" for a booking:
+ * - roomTotal comes from Booking.totalPrice (Float)
+ * - chargesTotal comes from Charge.total (Int)
+ *
+ * I round the room total to keep currency consistent (your UI shows 0 decimals).
+ * If later you want decimals, we can switch to cents everywhere.
+ */
+function computeGrandTotal(roomTotal: number, chargesTotal: number) {
+  const safeRoomTotal = Math.round(roomTotal ?? 0);
+  const safeChargesTotal = Math.round(chargesTotal ?? 0);
+  return safeRoomTotal + safeChargesTotal;
+}
+
 /* =====================================
       CONTROLLERS (MULTI-HOTEL SAFE)
 ===================================== */
@@ -140,6 +167,64 @@ export const getPaymentById = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * NEW: GET /api/payments/booking/:bookingId/summary
+ * Here I return a clean financial summary for one reservation:
+ * - roomTotal
+ * - chargesTotal
+ * - grandTotal
+ * - paidCompleted
+ * - dueAmount
+ *
+ * This lets the frontend show "pending" including charges.
+ */
+export const getBookingPaymentSummary = async (req: AuthRequest, res: Response) => {
+  try {
+    const hotelId = req.user?.hotelId;
+    if (!hotelId) {
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
+    }
+
+    const bookingId = Number(req.params.bookingId);
+    if (Number.isNaN(bookingId) || bookingId <= 0) {
+      return res.status(400).json({ success: false, error: "Invalid booking ID" });
+    }
+
+    // Here I verify the booking belongs to this hotel
+    const booking = await prisma.booking.findFirst({
+      where: { id: bookingId, hotelId },
+      select: { id: true, totalPrice: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, error: "Booking not found in this hotel" });
+    }
+
+    const chargesTotal = await getChargesTotalForBooking(bookingId);
+    const paidCompleted = await getCompletedPaidForBooking(bookingId);
+
+    const roomTotal = Math.round(booking.totalPrice ?? 0);
+    const grandTotal = computeGrandTotal(booking.totalPrice ?? 0, chargesTotal);
+
+    const dueAmount = Math.max(grandTotal - paidCompleted, 0);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        bookingId,
+        roomTotal,
+        chargesTotal,
+        grandTotal,
+        paidCompleted,
+        dueAmount,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getBookingPaymentSummary:", error);
+    return res.status(500).json({ success: false, error: "Error fetching booking payment summary" });
+  }
+};
+
 // POST /api/payments
 export const createPayment = async (req: AuthRequest, res: Response) => {
   try {
@@ -172,15 +257,25 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    /**
+     * Critical fix:
+     * Here I include charges in the maximum payable amount.
+     * Before: I compared against booking.totalPrice only (room total).
+     * Now: I compare against grandTotal = roomTotal + chargesTotal.
+     */
+    const chargesTotal = await getChargesTotalForBooking(data.bookingId);
+    const grandTotal = computeGrandTotal(booking.totalPrice ?? 0, chargesTotal);
+
     // Here I prevent overpayment only when created as "completed"
     if (data.status === "completed") {
       const alreadyPaid = await getCompletedPaidForBooking(data.bookingId);
       const newTotalPaid = alreadyPaid + data.amount;
 
-      if (newTotalPaid > booking.totalPrice) {
+      if (newTotalPaid > grandTotal) {
         return res.status(400).json({
           success: false,
-          error: "This payment exceeds the booking total. Payment cannot be recorded.",
+          error: "This payment exceeds the reservation total (room + charges). Payment cannot be recorded.",
+          details: { grandTotal, alreadyPaid, attempt: data.amount },
         });
       }
     }
@@ -245,15 +340,23 @@ export const updatePayment = async (req: AuthRequest, res: Response) => {
     const nextAmount = parsed.data.amount ?? existing.amount;
     const nextStatus = (parsed.data.status ?? existing.status) as PaymentStatus;
 
+    /**
+     * 
+     * Here I include charges in the maximum payable amount for updates too.
+     */
+    const chargesTotal = await getChargesTotalForBooking(existing.bookingId);
+    const grandTotal = computeGrandTotal(existing.booking.totalPrice ?? 0, chargesTotal);
+
     // Here I prevent overpayment on updates if status is completed
     if (nextStatus === "completed") {
       const alreadyPaid = await getCompletedPaidForBooking(existing.bookingId, existing.id);
       const newTotalPaid = alreadyPaid + nextAmount;
 
-      if (newTotalPaid > existing.booking.totalPrice) {
+      if (newTotalPaid > grandTotal) {
         return res.status(400).json({
           success: false,
-          error: "Completed payments would exceed the booking total. Update not allowed.",
+          error: "Completed payments would exceed the reservation total (room + charges). Update not allowed.",
+          details: { grandTotal, alreadyPaid, attempt: nextAmount },
         });
       }
     }

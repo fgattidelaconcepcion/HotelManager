@@ -12,6 +12,10 @@ import RoleGate from "../auth/RoleGate";
 type PaymentMethod = "cash" | "card" | "transfer";
 type PaymentStatus = "pending" | "completed" | "failed";
 
+/* =====================================
+      TYPES
+===================================== */
+
 interface PaymentBookingGuest {
   id: number;
   name: string;
@@ -74,8 +78,21 @@ interface Booking {
   guest?: BookingGuest | null;
   checkIn: string;
   checkOut: string;
-  totalPrice: number;
+  totalPrice: number; // room total (legacy)
   status: string;
+}
+
+/**
+ *  Here I define the backend summary response for a booking.
+ * This summary includes charges, so I can compute "pending" correctly.
+ */
+interface BookingPaymentSummary {
+  bookingId: number;
+  roomTotal: number;
+  chargesTotal: number;
+  grandTotal: number;
+  paidCompleted: number;
+  dueAmount: number;
 }
 
 interface PaymentFormState {
@@ -98,6 +115,7 @@ function mapApiError(err: unknown) {
   if (axios.isAxiosError(err)) {
     return (
       (err.response?.data as any)?.error ||
+      (err.response?.data as any)?.message ||
       err.message ||
       "Request failed. Please try again."
     );
@@ -125,6 +143,14 @@ export default function Payments() {
   const [filterStatus, setFilterStatus] = useState<"" | PaymentStatus>("");
 
   const [autoOpenedFromBooking, setAutoOpenedFromBooking] = useState(false);
+
+  //  Here I store the financial summary for the currently selected booking.
+  const [summary, setSummary] = useState<BookingPaymentSummary | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+
+  /* =====================================
+        FORMATTERS
+  ===================================== */
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat("en-UY", {
@@ -181,6 +207,10 @@ export default function Payments() {
     }
   };
 
+  /* =====================================
+        LOADERS
+  ===================================== */
+
   const buildPaymentsParams = (override?: {
     bookingId?: string;
     status?: "" | PaymentStatus;
@@ -231,6 +261,30 @@ export default function Payments() {
     }
   };
 
+  /**
+   *Here I load the booking payment summary (room + charges + due).
+   * I call this whenever the user selects a reservation in the modal.
+   */
+  const loadSummary = async (bookingId: number) => {
+    try {
+      setLoadingSummary(true);
+      setSummary(null);
+
+      const res = await api.get(`/payments/booking/${bookingId}/summary`);
+      const data = res.data?.data ?? res.data;
+
+      if (data && typeof data === "object") {
+        setSummary(data as BookingPaymentSummary);
+      }
+    } catch (err) {
+      // I keep this non-blocking, but I still show a helpful error in the modal.
+      console.error("Error loading booking summary", err);
+      setSummary(null);
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
+
   useEffect(() => {
     loadPayments();
     loadBookings();
@@ -256,16 +310,22 @@ export default function Payments() {
     setAutoOpenedFromBooking(true);
   }, [searchParams, bookings, loadingBookings, autoOpenedFromBooking]);
 
+  /* =====================================
+        MODAL HANDLERS
+  ===================================== */
+
   const handleOpenCreate = () => {
     setIsEditing(false);
     setError(null);
     setForm(emptyForm);
+    setSummary(null);
     setShowModal(true);
   };
 
   const handleOpenEdit = (payment: Payment) => {
     setIsEditing(true);
     setError(null);
+
     setForm({
       id: payment.id,
       bookingId: String(payment.bookingId),
@@ -273,6 +333,10 @@ export default function Payments() {
       method: payment.method,
       status: payment.status,
     });
+
+    // Here I pre-load summary so the edit modal shows correct due (room + charges).
+    loadSummary(payment.bookingId);
+
     setShowModal(true);
   };
 
@@ -281,6 +345,7 @@ export default function Payments() {
     setForm(emptyForm);
     setIsEditing(false);
     setError(null);
+    setSummary(null);
   };
 
   const handleChange = (
@@ -291,11 +356,30 @@ export default function Payments() {
   };
 
   const selectedBookingId = form.bookingId ? Number(form.bookingId) : null;
+
   const selectedBooking = useMemo(() => {
     if (!selectedBookingId || Number.isNaN(selectedBookingId)) return null;
     return bookings.find((b) => b.id === selectedBookingId) ?? null;
   }, [bookings, selectedBookingId]);
 
+  /**
+   * Whenever the selected booking changes, I load the summary.
+   * This gives me dueAmount including charges, and keeps the UI consistent.
+   */
+  useEffect(() => {
+    if (!selectedBookingId || Number.isNaN(selectedBookingId)) {
+      setSummary(null);
+      return;
+    }
+
+    loadSummary(selectedBookingId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBookingId]);
+
+  /**
+   * Here I still compute completed payments locally (for consistency),
+   * but the source of truth for "due including charges" is the summary.
+   */
   const completedPaymentsForSelected = useMemo(() => {
     if (!selectedBooking) return [];
     return payments.filter((p) => {
@@ -311,8 +395,16 @@ export default function Payments() {
     0
   );
 
-  const totalPrice = selectedBooking?.totalPrice ?? 0;
-  const remainingForSelected = totalPrice - totalPaidForSelected;
+  /**
+   * 
+   * Here I compute "remaining" using summary.dueAmount (room + charges).
+   * If summary hasn't loaded yet, I fallback to the legacy room-only totalPrice.
+   */
+  const legacyTotal = selectedBooking?.totalPrice ?? 0;
+  const remainingForSelected =
+    summary && summary.bookingId === selectedBooking?.id
+      ? summary.dueAmount
+      : Math.max(legacyTotal - totalPaidForSelected, 0);
 
   const isBookingFullyPaid = !!selectedBooking && remainingForSelected <= 0;
 
@@ -325,6 +417,10 @@ export default function Payments() {
       amount: String(Math.max(0, Math.floor(remainingForSelected))),
     }));
   };
+
+  /* =====================================
+        VALIDATION + SUBMIT
+  ===================================== */
 
   const validateForm = () => {
     setError(null);
@@ -357,6 +453,9 @@ export default function Payments() {
       return false;
     }
 
+    /**
+     *  Here I validate "completed" payments against the true remaining balance (including charges).
+     */
     if (selectedBooking && form.status === "completed") {
       if (amountNumber > remainingForSelected) {
         setError(
@@ -398,7 +497,10 @@ export default function Payments() {
         toast.success("Payment created");
       }
 
-      await loadPayments();
+      // Here I refresh payments and summary so the UI instantly reflects new pending balance.
+      await loadPayments({ bookingId: filterBookingId, status: filterStatus });
+      if (selectedBookingId) await loadSummary(selectedBookingId);
+
       handleCloseModal();
     } catch (err) {
       const message = mapApiError(err);
@@ -408,6 +510,10 @@ export default function Payments() {
       setLoading(false);
     }
   };
+
+  /* =====================================
+        LIST ACTIONS
+  ===================================== */
 
   const handleDelete = async (payment: Payment) => {
     const ok = window.confirm(
@@ -442,7 +548,12 @@ export default function Payments() {
     loadPayments({ bookingId: "", status: "" });
   };
 
+  /* =====================================
+        DASHBOARD TOTALS
+  ===================================== */
+
   const totalAmount = payments.reduce((sum, p) => sum + p.amount, 0);
+
   const totalByStatus: Record<PaymentStatus, number> = {
     pending: payments.filter((p) => p.status === "pending").reduce((s, p) => s + p.amount, 0),
     completed: payments.filter((p) => p.status === "completed").reduce((s, p) => s + p.amount, 0),
@@ -451,6 +562,10 @@ export default function Payments() {
 
   const disableCreateCompletedWhenFullyPaid =
     !isEditing && isBookingFullyPaid && form.status === "completed";
+
+  /* =====================================
+        RENDER
+  ===================================== */
 
   return (
     <div className="space-y-6">
@@ -700,44 +815,76 @@ export default function Payments() {
                     </Button>
                   </div>
 
+                  {/*  summary block */}
                   {selectedBooking && (
                     <div className="mt-2 text-xs text-gray-600 space-y-1 border rounded p-2 bg-gray-50">
-                      <p>
-                        <span className="font-semibold">Reservation total:</span>{" "}
-                        {formatCurrency(selectedBooking.totalPrice)}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Total paid (completed):</span>{" "}
-                        {formatCurrency(totalPaidForSelected)}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Due:</span>{" "}
-                        {formatCurrency(Math.max(0, remainingForSelected))}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Status:</span>{" "}
-                        {isBookingFullyPaid ? "✅ Fully paid" : "🟡 Balance due"}
-                      </p>
+                      {loadingSummary && (
+                        <p className="text-gray-500">Loading reservation summary...</p>
+                      )}
 
-                      {!isBookingFullyPaid && remainingForSelected > 0 && (
-                        <div className="pt-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="text-xs px-2 py-1"
-                            onClick={handleFillRemainingAmount}
-                          >
-                            Use balance due as amount
-                          </Button>
-                        </div>
+                      {!loadingSummary && summary && summary.bookingId === selectedBooking.id ? (
+                        <>
+                          <p>
+                            <span className="font-semibold">Room total:</span>{" "}
+                            {formatCurrency(summary.roomTotal)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Charges total:</span>{" "}
+                            {formatCurrency(summary.chargesTotal)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Grand total:</span>{" "}
+                            {formatCurrency(summary.grandTotal)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Total paid (completed):</span>{" "}
+                            {formatCurrency(summary.paidCompleted)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Due (pending):</span>{" "}
+                            {formatCurrency(Math.max(0, summary.dueAmount))}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Status:</span>{" "}
+                            {summary.dueAmount <= 0 ? "✅ Fully paid" : "🟡 Balance due"}
+                          </p>
+
+                          {summary.dueAmount > 0 && (
+                            <div className="pt-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="text-xs px-2 py-1"
+                                onClick={handleFillRemainingAmount}
+                              >
+                                Use balance due as amount
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {/* Fallback (legacy) */}
+                          <p>
+                            <span className="font-semibold">Reservation total:</span>{" "}
+                            {formatCurrency(selectedBooking.totalPrice)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Total paid (completed):</span>{" "}
+                            {formatCurrency(totalPaidForSelected)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Due:</span>{" "}
+                            {formatCurrency(Math.max(0, remainingForSelected))}
+                          </p>
+                        </>
                       )}
                     </div>
                   )}
 
-                  {!isEditing && isBookingFullyPaid && (
+                  {!isEditing && isBookingFullyPaid && form.status === "completed" && (
                     <p className="mt-2 text-xs text-red-600">
-                      This reservation is already fully paid. You can't register
-                      more completed payments.
+                      This reservation is already fully paid. You can't register more completed payments.
                     </p>
                   )}
                 </div>
@@ -830,4 +977,4 @@ export default function Payments() {
       )}
     </div>
   );
-}  
+}

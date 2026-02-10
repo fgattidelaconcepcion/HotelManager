@@ -24,6 +24,12 @@ const fmtDateTime = (d?: Date | null) => {
   }
 };
 
+const parseQueryDate = (value: unknown): Date | null => {
+  if (!value || typeof value !== "string") return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
 /**
  * Here I create a "snapshot" record of the guest + stay for police reporting.
  *
@@ -50,13 +56,10 @@ export const createStayRegistrationForBooking = async (
         .json({ success: false, error: "Invalid booking ID" });
     }
 
-    // Here I load the booking scoped by hotelId (tenant isolation).
+    // Tenant isolation
     const booking = await prisma.booking.findFirst({
       where: { id: bookingId, hotelId },
-      include: {
-        room: true,
-        guest: true,
-      },
+      include: { room: true, guest: true },
     });
 
     if (!booking) {
@@ -75,7 +78,6 @@ export const createStayRegistrationForBooking = async (
       });
     }
 
-    // Here I prevent duplicates (bookingId is unique on StayRegistration).
     const existing = await prisma.stayRegistration.findUnique({
       where: { bookingId },
     });
@@ -90,11 +92,6 @@ export const createStayRegistrationForBooking = async (
 
     const g = booking.guest;
 
-    /**
-     * Here I create the police snapshot:
-     * - identity fields are copied from the Guest at the time of creation
-     * - stay dates are copied from the Booking
-     */
     const created = await prisma.stayRegistration.create({
       data: {
         hotelId,
@@ -136,7 +133,7 @@ export const createStayRegistrationForBooking = async (
 
 /**
  * GET /api/reports/police?from=YYYY-MM-DD&to=YYYY-MM-DD
- * Here I return a CSV that you can upload/print for police.
+ * CSV export (includes phone + address + nationality).
  */
 export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => {
   try {
@@ -147,47 +144,35 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
         .json({ success: false, error: "Missing hotel context" });
     }
 
-    const { from, to } = req.query;
+    const fromD = parseQueryDate(req.query.from);
+    const toD = parseQueryDate(req.query.to);
 
     const where: any = { hotelId };
 
-    // Here I filter by createdAt (report generation period).
-    if (from && typeof from === "string") {
-      const d = new Date(from);
-      if (!Number.isNaN(d.getTime())) {
-        where.createdAt = { ...(where.createdAt ?? {}), gte: d };
-      }
-    }
-    if (to && typeof to === "string") {
-      const d = new Date(to);
-      if (!Number.isNaN(d.getTime())) {
-        where.createdAt = { ...(where.createdAt ?? {}), lte: d };
-      }
-    }
+    if (fromD) where.createdAt = { ...(where.createdAt ?? {}), gte: fromD };
+    if (toD) where.createdAt = { ...(where.createdAt ?? {}), lte: toD };
 
     const rows = await prisma.stayRegistration.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      include: {
-        room: { select: { number: true, floor: true } },
-      },
+      include: { room: { select: { number: true, floor: true } } },
     });
 
-    // Here I build a simple CSV (UTF-8).
     const header = [
       "createdAt",
       "bookingId",
       "roomNumber",
       "roomFloor",
       "guestName",
-      "documentType",
-      "documentNumber",
-      "nationality",
-      "birthDate",
-      "gender",
+      "guestPhone",
       "address",
       "city",
       "country",
+      "nationality",
+      "documentType",
+      "documentNumber",
+      "birthDate",
+      "gender",
       "scheduledCheckIn",
       "scheduledCheckOut",
       "checkedInAt",
@@ -211,14 +196,15 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
           r.room?.number ?? "",
           r.room?.floor ?? "",
           r.guestName,
-          r.documentType ?? "",
-          r.documentNumber ?? "",
-          r.nationality ?? "",
-          r.birthDate ? r.birthDate.toISOString().slice(0, 10) : "",
-          r.gender ?? "",
+          r.guestPhone ?? "",
           r.address ?? "",
           r.city ?? "",
           r.country ?? "",
+          r.nationality ?? "",
+          r.documentType ?? "",
+          r.documentNumber ?? "",
+          r.birthDate ? r.birthDate.toISOString().slice(0, 10) : "",
+          r.gender ?? "",
           r.scheduledCheckIn.toISOString(),
           r.scheduledCheckOut.toISOString(),
           r.checkedInAt ? r.checkedInAt.toISOString() : "",
@@ -230,10 +216,7 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
     ].join("\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="police-report.csv"`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="police-report.csv"`);
 
     return res.status(200).send(lines);
   } catch (error) {
@@ -246,7 +229,11 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
 
 /**
  * GET /api/reports/police/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD
- * Here I generate a structured PDF for printing (multiple rows).
+ *
+ * 
+ * - Landscape A4 (more space)
+ * - Dynamic row height (no overlap)
+ * - Includes Phone + Address + Nationality
  */
 export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => {
   try {
@@ -257,124 +244,77 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
         .json({ success: false, error: "Missing hotel context" });
     }
 
-    const { from, to } = req.query;
+    const from = typeof req.query.from === "string" ? req.query.from : "";
+    const to = typeof req.query.to === "string" ? req.query.to : "";
+
+    const fromD = parseQueryDate(req.query.from);
+    const toD = parseQueryDate(req.query.to);
 
     const where: any = { hotelId };
-
-    if (from && typeof from === "string") {
-      const d = new Date(from);
-      if (!Number.isNaN(d.getTime())) {
-        where.createdAt = { ...(where.createdAt ?? {}), gte: d };
-      }
-    }
-    if (to && typeof to === "string") {
-      const d = new Date(to);
-      if (!Number.isNaN(d.getTime())) {
-        where.createdAt = { ...(where.createdAt ?? {}), lte: d };
-      }
-    }
+    if (fromD) where.createdAt = { ...(where.createdAt ?? {}), gte: fromD };
+    if (toD) where.createdAt = { ...(where.createdAt ?? {}), lte: toD };
 
     const [hotel, rows] = await Promise.all([
       prisma.hotel.findUnique({ where: { id: hotelId } }),
       prisma.stayRegistration.findMany({
         where,
         orderBy: { createdAt: "desc" },
-        include: {
-          room: { select: { number: true, floor: true } },
-        },
+        include: { room: { select: { number: true, floor: true } } },
       }),
     ]);
 
-    // Here I set up the PDF response headers.
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="police-report.pdf"`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="police-report.pdf"`);
 
     const doc = new PDFDocument({
       size: "A4",
-      margin: 40,
+      layout: "landscape",
+      margin: 36,
       bufferPages: true,
     });
 
     doc.pipe(res);
 
-    // ====== Header ======
-    doc
-      .fontSize(16)
-      .text("Police report (Stay registrations)", { align: "left" });
-    doc.moveDown(0.25);
-
-    doc
-      .fontSize(10)
-      .fillColor("#444")
-      .text(`Hotel: ${hotel?.name ?? "Hotel"} (${hotel?.code ?? "N/A"})`);
+    // ===== Header =====
+    doc.fontSize(16).fillColor("#000").text("Police report (Stay registrations)");
+    doc.moveDown(0.2);
+    doc.fontSize(10).fillColor("#444");
+    doc.text(`Hotel: ${hotel?.name ?? "Hotel"} (${hotel?.code ?? "N/A"})`);
     doc.text(`Generated: ${fmtDateTime(new Date())}`);
-    doc.text(
-      `Period: ${typeof from === "string" ? from : "-"} → ${
-        typeof to === "string" ? to : "-"
-      }`
-    );
-    doc.moveDown(0.75);
-
+    doc.text(`Period: ${from || "-"} → ${to || "-"}`);
+    doc.moveDown(0.6);
     doc.fillColor("#000");
 
-    // ====== Table config ======
-    const pageWidth =
-      doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    // ===== Table helpers =====
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const startX = doc.page.margins.left;
     let y = doc.y;
+
+    const paddingX = 4;
+    const paddingY = 3;
 
     const cols = [
       { key: "createdAt", label: "Created", w: 70 },
       { key: "bookingId", label: "Bk", w: 35 },
-      { key: "room", label: "Room", w: 45 },
-      { key: "guestName", label: "Guest", w: 110 },
-      { key: "doc", label: "Doc", w: 105 },
-      { key: "nat", label: "Nat.", w: 55 },
-      { key: "checkIn", label: "Check-in", w: 70 },
-      { key: "checkOut", label: "Check-out", w: 70 },
+      { key: "room", label: "Room", w: 55 },
+      { key: "guestName", label: "Guest", w: 120 },
+      { key: "nationality", label: "Nat.", w: 60 },
+      { key: "phone", label: "Phone", w: 90 },
+      { key: "address", label: "Address", w: 220 },
+      { key: "doc", label: "Doc", w: 110 },
+      { key: "checkIn", label: "In", w: 70 },
+      { key: "checkOut", label: "Out", w: 70 },
     ];
 
     const totalW = cols.reduce((s, c) => s + c.w, 0);
     const scale = totalW > pageWidth ? pageWidth / totalW : 1;
     cols.forEach((c) => (c.w = Math.floor(c.w * scale)));
 
-    const rowH = 18;
-    const headerH = 20;
+    const tableW = cols.reduce((s, c) => s + c.w, 0);
 
-    const drawHeader = () => {
-      doc.fontSize(9).fillColor("#000");
-
-      // Here I draw a light background for the header row.
-      doc
-        .save()
-        .rect(startX, y, cols.reduce((s, c) => s + c.w, 0), headerH)
-        .fill("#F2F2F2")
-        .restore();
-
-      let x = startX;
-      doc.font("Helvetica-Bold");
-      for (const c of cols) {
-        doc.text(c.label, x + 4, y + 6, {
-          width: c.w - 8,
-          align: "left",
-        });
-        x += c.w;
-      }
-      doc.font("Helvetica");
-
-      y += headerH;
-
-      // Here I draw a line under the header.
-      doc
-        .moveTo(startX, y)
-        .lineTo(startX + cols.reduce((s, c) => s + c.w, 0), y)
-        .strokeColor("#DDD")
-        .stroke();
-
-      y += 2;
+    const buildAddress = (r: any) => {
+      const parts = [r.address, r.city, r.country].filter(Boolean);
+      return parts.join(", ");
     };
 
     const ensureSpace = (needed: number) => {
@@ -386,49 +326,118 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
       }
     };
 
-    drawHeader();
+    const drawHeader = () => {
+      doc.fontSize(9).fillColor("#000");
 
-    // ====== Rows ======
-    doc.fontSize(9).fillColor("#000").strokeColor("#EEE");
+      doc
+        .save()
+        .rect(startX, y, tableW, 20)
+        .fill("#F2F2F2")
+        .restore();
 
-    for (const r of rows) {
-      ensureSpace(rowH + 6);
+      let x = startX;
+      doc.font("Helvetica-Bold");
+      for (const c of cols) {
+        doc.text(c.label, x + paddingX, y + 6, {
+          width: c.w - paddingX * 2,
+          align: "left",
+        });
+        x += c.w;
+      }
+      doc.font("Helvetica");
 
+      y += 20;
+
+      doc
+        .moveTo(startX, y)
+        .lineTo(startX + tableW, y)
+        .strokeColor("#DDD")
+        .stroke();
+
+      y += 2;
+    };
+
+    const rowValues = (r: any) => {
       const roomLabel = r.room ? `${r.room.number} (F${r.room.floor})` : "";
       const docLabel = `${r.documentType ?? ""} ${r.documentNumber ?? ""}`.trim();
 
-      const values: Record<string, string> = {
+      return {
         createdAt: fmtDate(r.createdAt),
         bookingId: String(r.bookingId),
         room: roomLabel,
         guestName: r.guestName ?? "",
+        nationality: r.nationality ?? "",
+        phone: r.guestPhone ?? "",
+        address: buildAddress(r),
         doc: docLabel,
-        nat: r.nationality ?? "",
         checkIn: fmtDate(r.scheduledCheckIn),
         checkOut: fmtDate(r.scheduledCheckOut),
-      };
+      } as Record<string, string>;
+    };
 
-      let x = startX;
+    const calcRowHeight = (values: Record<string, string>) => {
+      // Base min height
+      let maxH = 16;
+
+      // We calculate height needed for each cell (wrap enabled)
+      // IMPORTANT: we keep font size consistent for measurements.
+      doc.font("Helvetica").fontSize(9);
+
       for (const c of cols) {
-        doc.text(values[c.key] ?? "", x + 4, y + 5, {
-          width: c.w - 8,
+        const text = values[c.key] ?? "";
+        const h = doc.heightOfString(text, {
+          width: c.w - paddingX * 2,
           align: "left",
-          ellipsis: true,
+        });
+        maxH = Math.max(maxH, h);
+      }
+
+      // Add padding + small breathing room
+      return Math.ceil(maxH + paddingY * 2 + 2);
+    };
+
+    const drawRow = (values: Record<string, string>, rowH: number) => {
+      let x = startX;
+
+      doc.font("Helvetica").fontSize(9).fillColor("#000");
+
+      for (const c of cols) {
+        doc.text(values[c.key] ?? "", x + paddingX, y + paddingY, {
+          width: c.w - paddingX * 2,
+          height: rowH - paddingY * 2,
+          align: "left",
+          // wrap true by default; this is exactly what we want
         });
         x += c.w;
       }
 
-      y += rowH;
-
+      // row bottom line
+      const yLine = y + rowH;
       doc
-        .moveTo(startX, y)
-        .lineTo(startX + cols.reduce((s, c) => s + c.w, 0), y)
+        .moveTo(startX, yLine)
+        .lineTo(startX + tableW, yLine)
+        .strokeColor("#EEE")
         .stroke();
 
-      y += 2;
+      y += rowH + 2;
+    };
+
+    // ===== Table =====
+    drawHeader();
+
+    if (rows.length === 0) {
+      doc.moveDown(0.8);
+      doc.fontSize(11).fillColor("#444").text("No stay registrations found for this period.");
+    } else {
+      for (const r of rows) {
+        const values = rowValues(r);
+        const rowH = calcRowHeight(values);
+        ensureSpace(rowH + 6);
+        drawRow(values, rowH);
+      }
     }
 
-    // ====== Footer (page numbers) ======
+    // ===== Footer (page numbers) =====
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
@@ -436,13 +445,10 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
       doc.text(
         `Page ${i - range.start + 1} of ${range.count}`,
         doc.page.margins.left,
-        doc.page.height - doc.page.margins.bottom + 10,
+        doc.page.height - doc.page.margins.bottom + 8,
         {
           align: "right",
-          width:
-            doc.page.width -
-            doc.page.margins.left -
-            doc.page.margins.right,
+          width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
         }
       );
     }
@@ -457,17 +463,8 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
 };
 
 /**
- *  GET /api/bookings/:id/stay-registration/pdf
- * Here I generate a printable PDF for ONE booking stay registration.
- *
- * Why this exists:
- * - The global report is useful, but at the front desk you often want to print
- *   a single booking "police form" quickly.
- *
- * Rules:
- * - I scope by hotelId (tenant safe)
- * - If the snapshot does not exist, I can auto-create it for convenience
- *   (optional, but very practical)
+ * GET /api/bookings/:id/stay-registration/pdf
+ * Single booking printable police form (this one is already fine).
  */
 export const exportStayRegistrationPdfByBooking = async (
   req: AuthRequest,
@@ -490,13 +487,9 @@ export const exportStayRegistrationPdfByBooking = async (
         .json({ success: false, error: "Invalid booking ID" });
     }
 
-    // Here I load booking scoped by hotelId.
     const booking = await prisma.booking.findFirst({
       where: { id: bookingId, hotelId },
-      include: {
-        room: true,
-        guest: true,
-      },
+      include: { room: true, guest: true },
     });
 
     if (!booking) {
@@ -515,7 +508,6 @@ export const exportStayRegistrationPdfByBooking = async (
       });
     }
 
-    // Here I get or create the snapshot for this booking.
     let snap = await prisma.stayRegistration.findUnique({
       where: { bookingId },
       include: {
@@ -556,37 +548,26 @@ export const exportStayRegistrationPdfByBooking = async (
         },
         include: {
           room: { select: { number: true, floor: true } },
-          createdBy: {
-            select: { id: true, name: true, email: true, role: true },
-          },
+          createdBy: { select: { id: true, name: true, email: true, role: true } },
           hotel: { select: { id: true, name: true, code: true } },
         },
       });
     }
 
-    // Here I set PDF headers.
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="stay-registration-booking-${bookingId}.pdf"`
     );
 
-    const doc = new PDFDocument({
-      size: "A4",
-      margin: 50,
-    });
-
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
     doc.pipe(res);
 
-    // ===== Title =====
     doc.fontSize(16).text("Police stay registration", { align: "center" });
     doc.moveDown(0.5);
 
-    // ===== Hotel + meta =====
-    doc
-      .fontSize(10)
-      .fillColor("#444")
-      .text(`Hotel: ${snap.hotel?.name ?? "Hotel"} (${snap.hotel?.code ?? "N/A"})`);
+    doc.fontSize(10).fillColor("#444");
+    doc.text(`Hotel: ${snap.hotel?.name ?? "Hotel"} (${snap.hotel?.code ?? "N/A"})`);
     doc.text(`Booking: #${snap.bookingId}`);
     doc.text(
       `Room: ${snap.room?.number ?? ""} ${
@@ -598,7 +579,6 @@ export const exportStayRegistrationPdfByBooking = async (
 
     doc.fillColor("#000");
 
-    // ===== Helpers to draw labeled fields =====
     const field = (label: string, value: any) => {
       doc.font("Helvetica-Bold").text(`${label}: `, { continued: true });
       doc.font("Helvetica").text(String(value ?? ""));
@@ -612,7 +592,6 @@ export const exportStayRegistrationPdfByBooking = async (
       doc.font("Helvetica").fontSize(10);
     };
 
-    // ===== Guest section =====
     section("Guest information");
     field("Name", snap.guestName);
     field("Email", snap.guestEmail ?? "-");
@@ -626,28 +605,20 @@ export const exportStayRegistrationPdfByBooking = async (
     field("City", snap.city ?? "-");
     field("Country", snap.country ?? "-");
 
-    // ===== Stay section =====
     section("Stay information");
     field("Scheduled check-in", fmtDateTime(snap.scheduledCheckIn));
     field("Scheduled check-out", fmtDateTime(snap.scheduledCheckOut));
     field("Checked-in at", snap.checkedInAt ? fmtDateTime(snap.checkedInAt) : "-");
-    field(
-      "Checked-out at",
-      snap.checkedOutAt ? fmtDateTime(snap.checkedOutAt) : "-"
-    );
+    field("Checked-out at", snap.checkedOutAt ? fmtDateTime(snap.checkedOutAt) : "-");
 
-    // ===== Audit section =====
     section("Audit");
     field("Created at", fmtDateTime(snap.createdAt));
     field("Created by", snap.createdBy?.name ?? "-");
     if (snap.createdBy?.email) field("Created by email", snap.createdBy.email);
 
-    // ===== Signature placeholders =====
     doc.moveDown(1.2);
-    doc
-      .font("Helvetica")
-      .fontSize(10)
-      .text("Signature (reception): ________________________________");
+    doc.font("Helvetica").fontSize(10);
+    doc.text("Signature (reception): ________________________________");
     doc.moveDown(0.6);
     doc.text("Signature (guest): _____________________________________");
 
