@@ -4,6 +4,10 @@ import { z } from "zod";
 /**
  * Here I validate and normalize environment variables in ONE place.
  * My goal: fail fast with a clear error when something is misconfigured.
+ *
+ * NOTE:
+ * - Railway injects PORT automatically.
+ * - In production we should bind to 0.0.0.0 (or omit HOST in listen).
  */
 
 const nodeEnv = process.env.NODE_ENV ?? "development";
@@ -15,7 +19,7 @@ const EnvSchema = z.object({
   DATABASE_URL: z
     .string()
     .min(1, "DATABASE_URL is required")
-    // Accept sqlite file url in dev (file:./dev.db) and allow postgres urls later
+    // Accept sqlite file url in dev (file:./dev.db) and allow postgres urls in production
     .refine(
       (v) => v.startsWith("file:") || v.startsWith("postgresql://") || v.startsWith("postgres://"),
       'DATABASE_URL must start with "file:", "postgresql://" or "postgres://"'
@@ -23,12 +27,23 @@ const EnvSchema = z.object({
 
   // Server
   PORT: z.coerce.number().int().positive().default(3000),
+
+  /**
+   * HOST:
+   * - In production platforms (Railway/Render) we must listen on 0.0.0.0
+   *   so the service is reachable from outside the container.
+   * - In local dev, localhost is also OK, but 0.0.0.0 works fine as well.
+   */
   HOST: z.string().default("0.0.0.0"),
 
   // Auth
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
 
-  // Frontend URL (optional in dev; required in prod if you want strict CORS)
+  /**
+   * Frontend URL:
+   * - Optional in development.
+   * - REQUIRED in production because we want strict CORS.
+   */
   FRONTEND_URL: z.string().url().optional(),
 
   // Logging
@@ -64,6 +79,15 @@ if (env.NODE_ENV === "production") {
   // I strongly recommend never allowing a short secret in prod.
   if (env.JWT_SECRET.includes("dev_secret")) {
     console.error("❌ JWT_SECRET looks like a dev secret. Set a strong secret in production.");
+    process.exit(1);
+  }
+
+  /**
+   * Fail closed: in production I require FRONTEND_URL to be present,
+   * otherwise CORS cannot be configured safely.
+   */
+  if (!env.FRONTEND_URL) {
+    console.error("❌ FRONTEND_URL is required in production for strict CORS.");
     process.exit(1);
   }
 }

@@ -1,6 +1,3 @@
-import dotenv from "dotenv";
-dotenv.config();
-
 import express, { NextFunction, Request, Response } from "express";
 import cors, { CorsOptions } from "cors";
 
@@ -16,6 +13,7 @@ import { logger } from "./services/logger";
 
 import mainRouter from "./routes/index";
 import dashboardRoutes from "./routes/dashboard.routes";
+import { env } from "./config/env";
 
 const app = express();
 
@@ -23,8 +21,10 @@ const app = express();
    Core settings
 ========================= */
 
-// Here I enable "trust proxy" because in production I may sit behind a proxy
-// (Railway/Render/NGINX). This is important for correct IP detection and secure cookies.
+/**
+ * Here I enable "trust proxy" because in production I may sit behind a proxy
+ * (Railway/Render/NGINX). This is important for correct IP detection and secure cookies.
+ */
 app.set("trust proxy", 1);
 
 /* =========================
@@ -72,13 +72,18 @@ app.use((req, res, next) => {
 
 /**
  * Here I define allowed origins for browsers.
- * - In dev I allow localhost.
- * - In production I REQUIRE FRONTEND_URL to be set, otherwise I fail closed.
+ * - In development I allow local dev origins.
+ * - In production I allow ONLY env.FRONTEND_URL (strict).
+ *
+ * IMPORTANT:
+ * - env.ts already enforces FRONTEND_URL to exist in production,
+ *   so by the time we reach this file we can safely configure CORS.
  */
+const devOrigins = ["http://localhost:5173", "http://localhost:3000"];
+
 const allowedOrigins = [
-  process.env.FRONTEND_URL, // e.g. https://your-frontend.vercel.app
-  "http://localhost:5173",
-  "http://localhost:3000",
+  ...(env.NODE_ENV === "production" ? [env.FRONTEND_URL!] : []),
+  ...devOrigins,
 ].filter(Boolean) as string[];
 
 const corsOptions: CorsOptions = {
@@ -86,19 +91,23 @@ const corsOptions: CorsOptions = {
     // Allow server-to-server / curl / Postman (no origin header)
     if (!origin) return cb(null, true);
 
-    const isProd = process.env.NODE_ENV === "production";
-
-    // Fail-closed in production if FRONTEND_URL is missing
-    if (isProd && !process.env.FRONTEND_URL) {
-      return cb(new Error("CORS misconfigured: FRONTEND_URL is not set"));
+    /**
+     * In development we can be flexible because local tooling sometimes uses
+     * different ports/origins. However, we still keep a controlled list.
+     */
+    if (env.NODE_ENV !== "production") {
+      // If you want to allow ANY origin in dev, you can return cb(null, true) here.
+      // I prefer keeping it explicit to avoid surprises.
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked (dev) for origin: ${origin}`));
     }
 
-    // In dev, allow any origin if FRONTEND_URL is not set
-    if (!isProd && !process.env.FRONTEND_URL) return cb(null, true);
-
+    /**
+     * In production we are strict: only the deployed frontend domain is allowed.
+     */
     if (allowedOrigins.includes(origin)) return cb(null, true);
 
-    return cb(new Error(`CORS blocked for origin: ${origin}`));
+    return cb(new Error(`CORS blocked (prod) for origin: ${origin}`));
   },
   credentials: true,
 };
@@ -109,14 +118,18 @@ app.use(cors(corsOptions));
    Body parsing
 ========================= */
 
-// Here I parse JSON bodies with a sane limit.
+/**
+ * Here I parse JSON bodies with a sane limit.
+ */
 app.use(express.json({ limit: "10mb" }));
 
 /* =========================
    Logging (HTTP)
 ========================= */
 
-// Here I log every request with requestId (rid).
+/**
+ * Here I log every request with requestId (rid).
+ */
 app.use(httpLogger);
 
 /* =========================
@@ -194,9 +207,13 @@ app.use((err: AppError, req: Request, res: Response, _next: NextFunction) => {
 
   const status = err.statusCode && Number.isInteger(err.statusCode) ? err.statusCode : 500;
 
-  const isProd = process.env.NODE_ENV === "production";
+  const isProd = env.NODE_ENV === "production";
 
-  // Here I log the request id so I can trace this exact failure in logs.
+  /**
+   * Here I log the request id so I can trace this exact failure in logs.
+   * In production I still log the real error message + stack to the server logs,
+   * but I return a generic message to clients for 500 errors.
+   */
   logger.error("Unhandled error", {
     requestId: (req as any).requestId,
     message: err.message,

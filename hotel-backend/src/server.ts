@@ -9,6 +9,11 @@ import { env } from "./config/env";
 /**
  * Here I read PORT/HOST from the validated env object.
  * This ensures the server never starts with a broken config.
+ *
+ * IMPORTANT FOR RAILWAY:
+ * - Railway exposes your service via a proxy and injects PORT.
+ * - Binding to a specific HOST can cause issues depending on the platform.
+ * - The safest approach is to listen on PORT only in production.
  */
 const PORT = env.PORT;
 const HOST = env.HOST;
@@ -20,9 +25,21 @@ async function startServer() {
     await prisma.$connect();
     logger.info("✅ Prisma connected");
 
-    server = app.listen(PORT, HOST, () => {
-      logger.info(`✅ Server listening on http://${HOST}:${PORT}`);
-    });
+    /**
+     * In production I avoid passing HOST to listen().
+     * This makes the server bind correctly in containerized environments.
+     *
+     * Locally, binding to HOST is fine and can help with debugging.
+     */
+    if (env.NODE_ENV === "production") {
+      server = app.listen(PORT, () => {
+        logger.info(`✅ Server listening on port ${PORT} (production)`);
+      });
+    } else {
+      server = app.listen(PORT, HOST, () => {
+        logger.info(`✅ Server listening on http://${HOST}:${PORT} (${env.NODE_ENV})`);
+      });
+    }
   } catch (error) {
     logger.error("❌ Failed to start server", { error });
     process.exit(1);
