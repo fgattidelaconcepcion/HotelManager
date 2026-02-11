@@ -23,8 +23,6 @@ const nullableDate = z.preprocess((v) => {
 /**
  * Here I validate guest creation with Zod.
  * I keep name required and allow the rest to be optional (nullable) fields.
- *
- *  I also include nationality because my DB model includes it and my UI uses it.
  */
 const guestSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -33,14 +31,23 @@ const guestSchema = z.object({
     z.string().email("Invalid email").nullable().optional()
   ),
   phone: nullableText,
+
+  // Identity
   documentNumber: nullableText,
-  address: nullableText,
   documentType: nullableText,
   nationality: nullableText,
   birthDate: nullableDate,
   gender: nullableText,
+
+  // Address
+  address: nullableText,
   city: nullableText,
   country: nullableText,
+
+  //  RIHP extra fields
+  maritalStatus: nullableText,
+  occupation: nullableText,
+  provenance: nullableText,
 });
 
 // Here I reuse the same schema for updates but make everything optional
@@ -51,7 +58,15 @@ const updateGuestSchema = guestSchema.partial();
  * I ensure the field is not null before applying contains().
  */
 const nullableContains = (
-  field: "email" | "phone" | "documentNumber" | "address" | "nationality",
+  field:
+    | "email"
+    | "phone"
+    | "documentNumber"
+    | "address"
+    | "nationality"
+    | "maritalStatus"
+    | "occupation"
+    | "provenance",
   q: string
 ): Prisma.GuestWhereInput => ({
   AND: [
@@ -71,10 +86,8 @@ export const getAllGuests = async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ success: false, error: "Missing hotel context" });
     }
 
-    // Here I optionally apply a search filter across multiple fields
     const searchRaw = req.query.search;
 
-    // Here I start the WHERE already scoped to the current hotel
     const where: Prisma.GuestWhereInput = { hotelId };
 
     if (typeof searchRaw === "string") {
@@ -87,6 +100,11 @@ export const getAllGuests = async (req: AuthRequest, res: Response) => {
           nullableContains("documentNumber", q),
           nullableContains("address", q),
           nullableContains("nationality", q),
+
+          //  Also searchable
+          nullableContains("maritalStatus", q),
+          nullableContains("occupation", q),
+          nullableContains("provenance", q),
         ];
       }
     }
@@ -100,13 +118,22 @@ export const getAllGuests = async (req: AuthRequest, res: Response) => {
         name: true,
         email: true,
         phone: true,
+
         documentNumber: true,
         documentType: true,
-        address: true,
         nationality: true,
         birthDate: true,
+        gender: true,
+
+        address: true,
         city: true,
         country: true,
+
+        //  RIHP extra fields
+        maritalStatus: true,
+        occupation: true,
+        provenance: true,
+
         createdAt: true,
         updatedAt: true,
       },
@@ -138,17 +165,26 @@ export const getGuestById = async (req: AuthRequest, res: Response) => {
     const guest = await prisma.guest.findFirst({
       where: { id, hotelId },
       select: {
-       id: true,
+        id: true,
         name: true,
         email: true,
         phone: true,
+
         documentNumber: true,
         documentType: true,
-        address: true,
         nationality: true,
         birthDate: true,
+        gender: true,
+
+        address: true,
         city: true,
         country: true,
+
+        // RIHP extra fields
+        maritalStatus: true,
+        occupation: true,
+        provenance: true,
+
         createdAt: true,
         updatedAt: true,
       },

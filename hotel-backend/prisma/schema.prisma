@@ -51,9 +51,15 @@ enum ChargeCategory {
  * ============================
  */
 model Hotel {
-  id        Int      @id @default(autoincrement())
-  name      String
-  code      String   @unique
+  id   Int    @id @default(autoincrement())
+  name String
+  code String @unique
+
+  // RIHP - Establishment info
+  address            String?
+  responsibleName    String?
+  registrationNumber String?
+
   createdAt DateTime @default(now())
 
   users     User[]
@@ -65,6 +71,7 @@ model Hotel {
   // New modules
   charges           Charge[]
   stayRegistrations StayRegistration[]
+  dailyCloses       DailyClose[]
 }
 
 /**
@@ -87,6 +94,9 @@ model User {
   // Opposite relations for auditing
   createdCharges           Charge[]
   createdStayRegistrations StayRegistration[]
+
+  // Daily close creator (audit)
+  createdDailyCloses DailyClose[] @relation("DailyCloseCreatedBy")
 
   @@unique([hotelId, email])
 }
@@ -146,11 +156,16 @@ model Guest {
   email   String?
   phone   String?
 
+  // RIHP - Extra required fields
+  maritalStatus String?
+  occupation    String?
+  provenance    String? // residencia habitual / procedencia
+
   // Existing
   documentNumber String? @map("documentnumber")
   address        String?
 
-  // ✅ Added to match your stayRegistration controller reads
+  // Fields used by stayRegistration snapshots
   documentType String?
   nationality  String?
   birthDate    DateTime?
@@ -271,10 +286,20 @@ model StayRegistration {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Snapshot identity (matches your controller)
+  // Snapshot identity
   guestName  String
   guestEmail String?
   guestPhone String?
+
+  // RIHP - Snapshot extra required fields
+  maritalStatus String?
+  occupation    String?
+  provenance    String?
+
+  // RIHP - Establishment snapshot (auditable)
+  hotelAddress            String?
+  hotelResponsibleName    String?
+  hotelRegistrationNumber String?
 
   nationality    String?
   documentType   String?
@@ -285,7 +310,7 @@ model StayRegistration {
   city           String?
   country        String?
 
-  // Snapshot stay dates (matches your controller)
+  // Snapshot stay dates
   scheduledCheckIn  DateTime
   scheduledCheckOut DateTime
   checkedInAt       DateTime?
@@ -299,5 +324,41 @@ model StayRegistration {
 
   @@index([hotelId, roomId])
   @@index([hotelId, guestId])
+  @@index([createdById])
+}
+
+/**
+ * ============================
+ * DAILY CLOSE (CASH CLOSING)
+ * ============================
+ * Option A:
+ * - A daily snapshot of COMPLETED payments for a given date (hotel-scoped).
+ * - This creates an immutable record you can export later (CSV/PDF).
+ * NOTE:
+ * - We store dateKey as "YYYY-MM-DD" to avoid timezone shifting issues.
+ * - Totals are integers (UYU) like Payment.amount.
+ */
+model DailyClose {
+  id      Int    @id @default(autoincrement())
+  hotelId Int
+  dateKey String // "YYYY-MM-DD"
+
+  // Core totals
+  totalCompleted Int
+
+  // Helpful breakdown
+  countCompleted Int
+  byMethod       Json? // { cash: 1200, card: 500, transfer: 0 } etc
+
+  // Audit
+  createdById Int?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  hotel     Hotel @relation(fields: [hotelId], references: [id])
+  createdBy User? @relation("DailyCloseCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([hotelId, dateKey], name: "hotelId_dateKey")
+  @@index([hotelId, dateKey])
   @@index([createdById])
 }

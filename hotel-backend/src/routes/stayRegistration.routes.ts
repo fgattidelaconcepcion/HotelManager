@@ -28,39 +28,43 @@ const router = Router();
 router.post(
   "/bookings/:id/stay-registration",
   authorizeRoles("admin", "receptionist"),
-  createStayRegistrationForBooking
+  createStayRegistrationForBooking // 
 );
 
 /**
  * Here I export a CSV police report (multiple rows).
- * admin only (usually sensitive)
+ * admin only
  *
  * GET /api/reports/police?from=YYYY-MM-DD&to=YYYY-MM-DD
  */
-router.get("/reports/police", authorizeRoles("admin"), exportPoliceReportCsv);
+router.get(
+  "/reports/police",
+  authorizeRoles("admin"),
+  exportPoliceReportCsv 
+);
 
 /**
  * Here I export a PRINTABLE PDF police report (multiple rows).
- * admin only (usually sensitive)
+ * admin only
  *
  * GET /api/reports/police/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD
  */
 router.get(
   "/reports/police/pdf",
   authorizeRoles("admin"),
-  exportPoliceReportPdf
+  exportPoliceReportPdf 
 );
 
 /**
- *  Here I export a PDF for ONE booking stay registration.
- * admin + receptionist (front desk often needs to print this)
+ * Here I export a PDF for ONE booking stay registration.
+ * admin + receptionist
  *
  * GET /api/bookings/:id/stay-registration/pdf
  */
 router.get(
   "/bookings/:id/stay-registration/pdf",
   authorizeRoles("admin", "receptionist"),
-  exportStayRegistrationPdfByBooking
+  exportStayRegistrationPdfByBooking // 
 );
 
 export default router;

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 
@@ -24,10 +24,14 @@ export default function Layout() {
     return localStorage.getItem("hotelCode") || "";
   }, []);
 
+  /**
+   * Here I define sidebar navigation items and restrict them by role.
+   */
   const navItems: NavItem[] = useMemo(
     () => [
       { to: "/", label: "Dashboard", exact: true, roles: ["admin", "receptionist"] },
       { to: "/planning", label: "Planning", roles: ["admin", "receptionist"] },
+      { to: "/daily-close", label: "Daily close", roles: ["admin", "receptionist"] },
       { to: "/rooms", label: "Rooms", roles: ["admin", "receptionist"] },
       { to: "/room-types", label: "Room Types", roles: ["admin"] },
       { to: "/guests", label: "Guests", roles: ["admin", "receptionist"] },
@@ -36,6 +40,7 @@ export default function Layout() {
       { to: "/charges", label: "Charges", roles: ["admin", "receptionist"] },
       { to: "/police-report", label: "Police report", roles: ["admin", "receptionist"] },
       { to: "/admin/employees", label: "Employees", roles: ["admin"] },
+      { to: "/hotel-settings", label: "Hotel settings", roles: ["admin"] },
     ],
     []
   );

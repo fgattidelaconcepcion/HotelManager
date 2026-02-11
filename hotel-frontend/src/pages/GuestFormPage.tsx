@@ -23,6 +23,11 @@ interface GuestFormState {
   birthDate: string; // YYYY-MM-DD
   gender: string;
 
+  //  RIHP extra fields
+  maritalStatus: string; // "civil" in the PDF
+  occupation: string;
+  provenance: string;
+
   // Address fields
   address: string;
   city: string;
@@ -42,6 +47,11 @@ const emptyForm: GuestFormState = {
   nationality: "",
   birthDate: "",
   gender: "",
+
+  //  RIHP extra fields
+  maritalStatus: "",
+  occupation: "",
+  provenance: "",
 
   address: "",
   city: "",
@@ -71,6 +81,7 @@ function mapApiError(err: unknown) {
 function toIsoDateOrNull(dateStr: string) {
   const d = dateStr.trim();
   if (!d) return null;
+
   // Here I force UTC noon to avoid timezone shifting issues.
   const iso = new Date(`${d}T12:00:00.000Z`);
   if (Number.isNaN(iso.getTime())) return null;
@@ -130,6 +141,11 @@ export default function GuestFormPage() {
         // Here I convert ISO DateTime -> YYYY-MM-DD for <input type="date">
         birthDate: guest?.birthDate ? String(guest.birthDate).slice(0, 10) : "",
         gender: guest?.gender ?? "",
+
+        //  RIHP extra fields
+        maritalStatus: guest?.maritalStatus ?? "",
+        occupation: guest?.occupation ?? "",
+        provenance: guest?.provenance ?? "",
 
         address: guest?.address ?? "",
         city: guest?.city ?? "",
@@ -205,6 +221,11 @@ export default function GuestFormPage() {
     if (form.nationality.trim()) payload.nationality = form.nationality.trim();
     if (form.gender.trim()) payload.gender = form.gender.trim();
 
+    // ✅ RIHP extra fields
+    if (form.maritalStatus.trim()) payload.maritalStatus = form.maritalStatus.trim();
+    if (form.occupation.trim()) payload.occupation = form.occupation.trim();
+    if (form.provenance.trim()) payload.provenance = form.provenance.trim();
+
     if (form.address.trim()) payload.address = form.address.trim();
     if (form.city.trim()) payload.city = form.city.trim();
     if (form.country.trim()) payload.country = form.country.trim();
@@ -271,12 +292,16 @@ export default function GuestFormPage() {
             <p className="text-sm text-gray-500">Loading data...</p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4 max-w-2xl">
-              <p className="text-xs text-slate-500">Fields marked with * are required.</p>
+              <p className="text-xs text-slate-500">
+                Fields marked with * are required.
+              </p>
 
               {/* BASIC */}
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Name *</label>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Name *
+                  </label>
                   <input
                     type="text"
                     value={form.name}
@@ -288,7 +313,9 @@ export default function GuestFormPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Email
+                  </label>
                   <input
                     type="email"
                     value={form.email}
@@ -300,7 +327,9 @@ export default function GuestFormPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Phone</label>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Phone
+                  </label>
                   <input
                     type="text"
                     value={form.phone}
@@ -314,10 +343,14 @@ export default function GuestFormPage() {
 
               {/* IDENTITY */}
               <div className="mt-6">
-                <h3 className="text-sm font-semibold text-gray-800">Identity (for police report)</h3>
+                <h3 className="text-sm font-semibold text-gray-800">
+                  Identity (for police report)
+                </h3>
                 <div className="grid gap-4 md:grid-cols-2 mt-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Document type</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Document type
+                    </label>
                     <input
                       type="text"
                       value={form.documentType}
@@ -329,7 +362,9 @@ export default function GuestFormPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Document number</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Document number
+                    </label>
                     <input
                       type="text"
                       value={form.documentNumber}
@@ -340,7 +375,9 @@ export default function GuestFormPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Nationality</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Nationality
+                    </label>
                     <input
                       type="text"
                       value={form.nationality}
@@ -352,7 +389,9 @@ export default function GuestFormPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Birth date</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Birth date
+                    </label>
                     <input
                       type="date"
                       value={form.birthDate}
@@ -363,7 +402,9 @@ export default function GuestFormPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Gender</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Gender
+                    </label>
                     <input
                       type="text"
                       value={form.gender}
@@ -376,12 +417,64 @@ export default function GuestFormPage() {
                 </div>
               </div>
 
+              {/*  RIHP EXTRA */}
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-gray-800">
+                  RIHP extra fields
+                </h3>
+                <div className="grid gap-4 md:grid-cols-2 mt-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Marital status (Civil)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.maritalStatus}
+                      onChange={(e) => handleChange("maritalStatus", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      placeholder="e.g., Single / Married"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Occupation
+                    </label>
+                    <input
+                      type="text"
+                      value={form.occupation}
+                      onChange={(e) => handleChange("occupation", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      placeholder="e.g., Engineer"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Provenance (habitual residence)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.provenance}
+                      onChange={(e) => handleChange("provenance", e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm"
+                      disabled={loading}
+                      placeholder="e.g., Montevideo, Uruguay"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* ADDRESS */}
               <div className="mt-6">
                 <h3 className="text-sm font-semibold text-gray-800">Address</h3>
                 <div className="grid gap-4 md:grid-cols-2 mt-3">
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700">Address</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Address
+                    </label>
                     <input
                       type="text"
                       value={form.address}
@@ -393,7 +486,9 @@ export default function GuestFormPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">City</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      City
+                    </label>
                     <input
                       type="text"
                       value={form.city}
@@ -405,7 +500,9 @@ export default function GuestFormPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Country</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Country
+                    </label>
                     <input
                       type="text"
                       value={form.country}
@@ -419,7 +516,12 @@ export default function GuestFormPage() {
               </div>
 
               <div className="flex justify-end gap-2 mt-6">
-                <Button type="button" variant="ghost" onClick={handleCancel} disabled={loading}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleCancel}
+                  disabled={loading}
+                >
                   Cancel
                 </Button>
 

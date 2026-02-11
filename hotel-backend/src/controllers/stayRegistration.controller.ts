@@ -4,7 +4,7 @@ import type { AuthRequest } from "../middlewares/authMiddleware";
 import PDFDocument from "pdfkit";
 
 /**
- * Small helpers to keep formatting consistent.
+ * Here I keep small helpers to keep formatting consistent across exports.
  */
 const fmtDate = (d?: Date | null) => {
   if (!d) return "";
@@ -31,7 +31,7 @@ const parseQueryDate = (value: unknown): Date | null => {
 };
 
 /**
- * Here I create a "snapshot" record of the guest + stay for police reporting.
+ * Here I create a "snapshot" record of the guest + stay for police reporting (RIHP).
  *
  * POST /api/bookings/:id/stay-registration
  */
@@ -56,7 +56,10 @@ export const createStayRegistrationForBooking = async (
         .json({ success: false, error: "Invalid booking ID" });
     }
 
-    // Tenant isolation
+    /**
+     * Here I enforce tenant isolation: booking must belong to the current hotel.
+     * I also include guest + room so I can snapshot data.
+     */
     const booking = await prisma.booking.findFirst({
       where: { id: bookingId, hotelId },
       include: { room: true, guest: true },
@@ -78,6 +81,9 @@ export const createStayRegistrationForBooking = async (
       });
     }
 
+    /**
+     * Here I ensure idempotency: one snapshot per booking.
+     */
     const existing = await prisma.stayRegistration.findUnique({
       where: { bookingId },
     });
@@ -90,8 +96,23 @@ export const createStayRegistrationForBooking = async (
       });
     }
 
+    /**
+     * Here I load hotel info because RIHP also requires establishment details.
+     */
+    const hotel = await prisma.hotel.findUnique({
+      where: { id: hotelId },
+      select: { address: true, responsibleName: true, registrationNumber: true },
+    });
+
     const g = booking.guest;
 
+    /**
+     * Here I create the snapshot:
+     * - Guest identity fields (RIHP)
+     * - Guest extra fields (maritalStatus / occupation / provenance)
+     * - Hotel establishment fields (address / responsible / registrationNumber)
+     * - Stay dates
+     */
     const created = await prisma.stayRegistration.create({
       data: {
         hotelId,
@@ -100,21 +121,32 @@ export const createStayRegistrationForBooking = async (
         guestId: g.id,
         createdById: createdById ?? null,
 
-        // Snapshot identity
+        // Guest snapshot
         guestName: g.name,
         guestEmail: g.email ?? null,
         guestPhone: g.phone ?? null,
 
+        nationality: (g as any).nationality ?? null,
         documentType: (g as any).documentType ?? null,
         documentNumber: (g as any).documentNumber ?? null,
-        nationality: (g as any).nationality ?? null,
         birthDate: (g as any).birthDate ?? null,
         gender: (g as any).gender ?? null,
+
         address: (g as any).address ?? null,
         city: (g as any).city ?? null,
         country: (g as any).country ?? null,
 
-        // Snapshot stay dates
+        //  RIHP extra guest fields
+        maritalStatus: (g as any).maritalStatus ?? null,
+        occupation: (g as any).occupation ?? null,
+        provenance: (g as any).provenance ?? null,
+
+        // RIHP establishment snapshot fields
+        hotelAddress: hotel?.address ?? null,
+        hotelResponsibleName: hotel?.responsibleName ?? null,
+        hotelRegistrationNumber: hotel?.registrationNumber ?? null,
+
+        // Stay snapshot
         scheduledCheckIn: booking.checkIn,
         scheduledCheckOut: booking.checkOut,
         checkedInAt: booking.checkedInAt ?? null,
@@ -133,7 +165,18 @@ export const createStayRegistrationForBooking = async (
 
 /**
  * GET /api/reports/police?from=YYYY-MM-DD&to=YYYY-MM-DD
- * CSV export (includes phone + address + nationality).
+ * CSV export (RIHP - Uruguay)
+ *
+ * Required fields for your screenshot:
+ * - Guest full name
+ * - Document type + number
+ * - Nationality
+ * - Birth date (or age)
+ * - Marital status
+ * - Occupation
+ * - Provenance (habitual residence)
+ * - Stay details: entry/exit + room number
+ * - Establishment info: address, responsible name, registration number
  */
 export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => {
   try {
@@ -148,35 +191,33 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
     const toD = parseQueryDate(req.query.to);
 
     const where: any = { hotelId };
-
     if (fromD) where.createdAt = { ...(where.createdAt ?? {}), gte: fromD };
     if (toD) where.createdAt = { ...(where.createdAt ?? {}), lte: toD };
 
+    /**
+     * Here I fetch stay registrations plus room number for the RIHP stay detail.
+     */
     const rows = await prisma.stayRegistration.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      include: { room: { select: { number: true, floor: true } } },
+      include: { room: { select: { number: true } } },
     });
 
     const header = [
-      "createdAt",
-      "bookingId",
-      "roomNumber",
-      "roomFloor",
-      "guestName",
-      "guestPhone",
-      "address",
-      "city",
-      "country",
-      "nationality",
+      "guestFullName",
       "documentType",
       "documentNumber",
+      "nationality",
       "birthDate",
-      "gender",
-      "scheduledCheckIn",
-      "scheduledCheckOut",
-      "checkedInAt",
-      "checkedOutAt",
+      "maritalStatus",
+      "occupation",
+      "provenance",
+      "checkInDate",
+      "checkOutDate",
+      "roomNumber",
+      "hotelAddress",
+      "hotelResponsibleName",
+      "hotelRegistrationNumber",
     ];
 
     const escape = (v: any) => {
@@ -191,24 +232,20 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
       header.join(","),
       ...rows.map((r) =>
         [
-          r.createdAt.toISOString(),
-          r.bookingId,
-          r.room?.number ?? "",
-          r.room?.floor ?? "",
-          r.guestName,
-          r.guestPhone ?? "",
-          r.address ?? "",
-          r.city ?? "",
-          r.country ?? "",
-          r.nationality ?? "",
+          r.guestName ?? "",
           r.documentType ?? "",
           r.documentNumber ?? "",
+          r.nationality ?? "",
           r.birthDate ? r.birthDate.toISOString().slice(0, 10) : "",
-          r.gender ?? "",
-          r.scheduledCheckIn.toISOString(),
-          r.scheduledCheckOut.toISOString(),
-          r.checkedInAt ? r.checkedInAt.toISOString() : "",
-          r.checkedOutAt ? r.checkedOutAt.toISOString() : "",
+          r.maritalStatus ?? "",
+          r.occupation ?? "",
+          r.provenance ?? "",
+          r.scheduledCheckIn ? r.scheduledCheckIn.toISOString().slice(0, 10) : "",
+          r.scheduledCheckOut ? r.scheduledCheckOut.toISOString().slice(0, 10) : "",
+          r.room?.number ?? "",
+          r.hotelAddress ?? "",
+          r.hotelResponsibleName ?? "",
+          r.hotelRegistrationNumber ?? "",
         ]
           .map(escape)
           .join(",")
@@ -216,7 +253,10 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
     ].join("\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="police-report.csv"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="police-report-rihp.csv"`
+    );
 
     return res.status(200).send(lines);
   } catch (error) {
@@ -229,11 +269,9 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
 
 /**
  * GET /api/reports/police/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * PDF export (RIHP - Uruguay)
  *
- * 
- * - Landscape A4 (more space)
- * - Dynamic row height (no overlap)
- * - Includes Phone + Address + Nationality
+ * Same fields as CSV, formatted for printing.
  */
 export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => {
   try {
@@ -254,17 +292,17 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
     if (fromD) where.createdAt = { ...(where.createdAt ?? {}), gte: fromD };
     if (toD) where.createdAt = { ...(where.createdAt ?? {}), lte: toD };
 
-    const [hotel, rows] = await Promise.all([
-      prisma.hotel.findUnique({ where: { id: hotelId } }),
-      prisma.stayRegistration.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        include: { room: { select: { number: true, floor: true } } },
-      }),
-    ]);
+    const rows = await prisma.stayRegistration.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: { room: { select: { number: true } } },
+    });
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="police-report.pdf"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="police-report-rihp.pdf"`
+    );
 
     const doc = new PDFDocument({
       size: "A4",
@@ -276,17 +314,15 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
     doc.pipe(res);
 
     // ===== Header =====
-    doc.fontSize(16).fillColor("#000").text("Police report (Stay registrations)");
+    doc.fontSize(16).fillColor("#000").text("Police report (RIHP)");
     doc.moveDown(0.2);
     doc.fontSize(10).fillColor("#444");
-    doc.text(`Hotel: ${hotel?.name ?? "Hotel"} (${hotel?.code ?? "N/A"})`);
     doc.text(`Generated: ${fmtDateTime(new Date())}`);
     doc.text(`Period: ${from || "-"} → ${to || "-"}`);
     doc.moveDown(0.6);
     doc.fillColor("#000");
 
-    // ===== Table helpers =====
-    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    // ===== Table =====
     const startX = doc.page.margins.left;
     let y = doc.y;
 
@@ -294,28 +330,20 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
     const paddingY = 3;
 
     const cols = [
-      { key: "createdAt", label: "Created", w: 70 },
-      { key: "bookingId", label: "Bk", w: 35 },
-      { key: "room", label: "Room", w: 55 },
-      { key: "guestName", label: "Guest", w: 120 },
-      { key: "nationality", label: "Nat.", w: 60 },
-      { key: "phone", label: "Phone", w: 90 },
-      { key: "address", label: "Address", w: 220 },
-      { key: "doc", label: "Doc", w: 110 },
-      { key: "checkIn", label: "In", w: 70 },
-      { key: "checkOut", label: "Out", w: 70 },
+      { key: "guestName", label: "Full name", w: 150 },
+      { key: "doc", label: "Document", w: 130 },
+      { key: "nationality", label: "Nationality", w: 90 },
+      { key: "birthDate", label: "Birth", w: 70 },
+      { key: "maritalStatus", label: "Civil", w: 70 },
+      { key: "occupation", label: "Occupation", w: 110 },
+      { key: "provenance", label: "Provenance", w: 120 },
+      { key: "checkIn", label: "Entry", w: 70 },
+      { key: "checkOut", label: "Exit", w: 70 },
+      { key: "roomNumber", label: "Room", w: 55 },
+      { key: "hotelInfo", label: "Establishment", w: 220 },
     ];
 
-    const totalW = cols.reduce((s, c) => s + c.w, 0);
-    const scale = totalW > pageWidth ? pageWidth / totalW : 1;
-    cols.forEach((c) => (c.w = Math.floor(c.w * scale)));
-
     const tableW = cols.reduce((s, c) => s + c.w, 0);
-
-    const buildAddress = (r: any) => {
-      const parts = [r.address, r.city, r.country].filter(Boolean);
-      return parts.join(", ");
-    };
 
     const ensureSpace = (needed: number) => {
       const bottom = doc.page.height - doc.page.margins.bottom;
@@ -328,12 +356,7 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
 
     const drawHeader = () => {
       doc.fontSize(9).fillColor("#000");
-
-      doc
-        .save()
-        .rect(startX, y, tableW, 20)
-        .fill("#F2F2F2")
-        .restore();
+      doc.save().rect(startX, y, tableW, 20).fill("#F2F2F2").restore();
 
       let x = startX;
       doc.font("Helvetica-Bold");
@@ -358,29 +381,32 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
     };
 
     const rowValues = (r: any) => {
-      const roomLabel = r.room ? `${r.room.number} (F${r.room.floor})` : "";
       const docLabel = `${r.documentType ?? ""} ${r.documentNumber ?? ""}`.trim();
+      const hotelInfo = [
+        r.hotelAddress ? `Addr: ${r.hotelAddress}` : null,
+        r.hotelResponsibleName ? `Resp: ${r.hotelResponsibleName}` : null,
+        r.hotelRegistrationNumber ? `Reg#: ${r.hotelRegistrationNumber}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
 
       return {
-        createdAt: fmtDate(r.createdAt),
-        bookingId: String(r.bookingId),
-        room: roomLabel,
         guestName: r.guestName ?? "",
-        nationality: r.nationality ?? "",
-        phone: r.guestPhone ?? "",
-        address: buildAddress(r),
         doc: docLabel,
-        checkIn: fmtDate(r.scheduledCheckIn),
-        checkOut: fmtDate(r.scheduledCheckOut),
+        nationality: r.nationality ?? "",
+        birthDate: r.birthDate ? fmtDate(r.birthDate) : "",
+        maritalStatus: r.maritalStatus ?? "",
+        occupation: r.occupation ?? "",
+        provenance: r.provenance ?? "",
+        checkIn: r.scheduledCheckIn ? fmtDate(r.scheduledCheckIn) : "",
+        checkOut: r.scheduledCheckOut ? fmtDate(r.scheduledCheckOut) : "",
+        roomNumber: r.room?.number ?? "",
+        hotelInfo,
       } as Record<string, string>;
     };
 
     const calcRowHeight = (values: Record<string, string>) => {
-      // Base min height
       let maxH = 16;
-
-      // We calculate height needed for each cell (wrap enabled)
-      // IMPORTANT: we keep font size consistent for measurements.
       doc.font("Helvetica").fontSize(9);
 
       for (const c of cols) {
@@ -392,13 +418,11 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
         maxH = Math.max(maxH, h);
       }
 
-      // Add padding + small breathing room
       return Math.ceil(maxH + paddingY * 2 + 2);
     };
 
     const drawRow = (values: Record<string, string>, rowH: number) => {
       let x = startX;
-
       doc.font("Helvetica").fontSize(9).fillColor("#000");
 
       for (const c of cols) {
@@ -406,12 +430,10 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
           width: c.w - paddingX * 2,
           height: rowH - paddingY * 2,
           align: "left",
-          // wrap true by default; this is exactly what we want
         });
         x += c.w;
       }
 
-      // row bottom line
       const yLine = y + rowH;
       doc
         .moveTo(startX, yLine)
@@ -422,12 +444,13 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
       y += rowH + 2;
     };
 
-    // ===== Table =====
     drawHeader();
 
     if (rows.length === 0) {
-      doc.moveDown(0.8);
-      doc.fontSize(11).fillColor("#444").text("No stay registrations found for this period.");
+      doc
+        .fontSize(11)
+        .fillColor("#444")
+        .text("No stay registrations found for this period.");
     } else {
       for (const r of rows) {
         const values = rowValues(r);
@@ -437,7 +460,7 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
       }
     }
 
-    // ===== Footer (page numbers) =====
+    // ===== Footer page numbers =====
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
@@ -448,7 +471,8 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
         doc.page.height - doc.page.margins.bottom + 8,
         {
           align: "right",
-          width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+          width:
+            doc.page.width - doc.page.margins.left - doc.page.margins.right,
         }
       );
     }
@@ -464,7 +488,11 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
 
 /**
  * GET /api/bookings/:id/stay-registration/pdf
- * Single booking printable police form (this one is already fine).
+ * Single booking printable police form.
+ *
+ * NOTE:
+ * You can keep your existing one; it already includes many fields.
+ * If you want, later we can update it to also show marital/occupation/provenance + establishment fields.
  */
 export const exportStayRegistrationPdfByBooking = async (
   req: AuthRequest,
@@ -520,6 +548,11 @@ export const exportStayRegistrationPdfByBooking = async (
     if (!snap) {
       const g = booking.guest;
 
+      const hotel = await prisma.hotel.findUnique({
+        where: { id: hotelId },
+        select: { address: true, responsibleName: true, registrationNumber: true },
+      });
+
       snap = await prisma.stayRegistration.create({
         data: {
           hotelId,
@@ -541,10 +574,20 @@ export const exportStayRegistrationPdfByBooking = async (
           city: (g as any).city ?? null,
           country: (g as any).country ?? null,
 
+          // Extra RIHP fields
+          maritalStatus: (g as any).maritalStatus ?? null,
+          occupation: (g as any).occupation ?? null,
+          provenance: (g as any).provenance ?? null,
+
+          // Establishment snapshot
+          hotelAddress: hotel?.address ?? null,
+          hotelResponsibleName: hotel?.responsibleName ?? null,
+          hotelRegistrationNumber: hotel?.registrationNumber ?? null,
+
           scheduledCheckIn: booking.checkIn,
           scheduledCheckOut: booking.checkOut,
           checkedInAt: booking.checkedInAt ?? null,
-          checkedOutAt: booking.checkedOutAt ?? null,
+          checkedOutAt: booking.checkedOutAt ?? /* FIX */ null,
         },
         include: {
           room: { select: { number: true, floor: true } },
@@ -592,27 +635,29 @@ export const exportStayRegistrationPdfByBooking = async (
       doc.font("Helvetica").fontSize(10);
     };
 
-    section("Guest information");
-    field("Name", snap.guestName);
-    field("Email", snap.guestEmail ?? "-");
-    field("Phone", snap.guestPhone ?? "-");
-    field("Nationality", snap.nationality ?? "-");
-    field("Document type", snap.documentType ?? "-");
-    field("Document number", snap.documentNumber ?? "-");
-    field("Birth date", snap.birthDate ? fmtDate(snap.birthDate) : "-");
-    field("Gender", snap.gender ?? "-");
-    field("Address", snap.address ?? "-");
-    field("City", snap.city ?? "-");
-    field("Country", snap.country ?? "-");
+    section("Guest information (RIHP)");
+    field("Full name", snap.guestName);
+    field("Document type", (snap as any).documentType ?? "-");
+    field("Document number", (snap as any).documentNumber ?? "-");
+    field("Nationality", (snap as any).nationality ?? "-");
+    field("Birth date", (snap as any).birthDate ? fmtDate((snap as any).birthDate) : "-");
+    field("Marital status", (snap as any).maritalStatus ?? "-");
+    field("Occupation", (snap as any).occupation ?? "-");
+    field("Provenance", (snap as any).provenance ?? "-");
 
     section("Stay information");
-    field("Scheduled check-in", fmtDateTime(snap.scheduledCheckIn));
-    field("Scheduled check-out", fmtDateTime(snap.scheduledCheckOut));
-    field("Checked-in at", snap.checkedInAt ? fmtDateTime(snap.checkedInAt) : "-");
-    field("Checked-out at", snap.checkedOutAt ? fmtDateTime(snap.checkedOutAt) : "-");
+    field("Scheduled check-in", fmtDateTime((snap as any).scheduledCheckIn));
+    field("Scheduled check-out", fmtDateTime((snap as any).scheduledCheckOut));
+    field("Checked-in at", (snap as any).checkedInAt ? fmtDateTime((snap as any).checkedInAt) : "-");
+    field("Checked-out at", (snap as any).checkedOutAt ? fmtDateTime((snap as any).checkedOutAt) : "-");
+
+    section("Establishment information");
+    field("Address", (snap as any).hotelAddress ?? "-");
+    field("Responsible name", (snap as any).hotelResponsibleName ?? "-");
+    field("Registration number", (snap as any).hotelRegistrationNumber ?? "-");
 
     section("Audit");
-    field("Created at", fmtDateTime(snap.createdAt));
+    field("Created at", fmtDateTime((snap as any).createdAt));
     field("Created by", snap.createdBy?.name ?? "-");
     if (snap.createdBy?.email) field("Created by email", snap.createdBy.email);
 

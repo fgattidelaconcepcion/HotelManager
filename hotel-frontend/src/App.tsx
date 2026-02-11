@@ -1,6 +1,7 @@
 import React from "react";
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
+
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -16,10 +17,12 @@ import RoomTypes from "./pages/RoomTypes";
 import ChargesPage from "./pages/ChargesPage";
 import PoliceReportPage from "./pages/PoliceReportPage";
 import Employees from "./pages/admin/Employees";
+import PlanningPage from "./pages/PlanningPage";
+import DailyClosePage from "./pages/DailyClosePage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout/Layout";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
-import PlanningPage from "./pages/PlanningPage";
+import HotelSettingsPage from "./pages/HotelSettingsPage";
 
 function Forbidden() {
   return (
@@ -65,13 +68,10 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Home /> },
 
-      // planning page 
-     { path: "planning", element: <PlanningPage /> },
+      { path: "planning", element: <PlanningPage /> },
+      { path: "daily-close", element: <DailyClosePage /> },
 
-// ...
-{ path: "planning", element: <PlanningPage /> },
-
-
+      // Rooms
       { path: "rooms", element: <Rooms /> },
       { path: "rooms/new", element: <RoomFormPage /> },
       { path: "rooms/:id", element: <RoomFormPage /> },
@@ -79,32 +79,37 @@ const router = createBrowserRouter([
       // Room types
       { path: "room-types", element: <RoomTypes /> },
 
+      // Guests
       { path: "guests", element: <Guests /> },
       { path: "guests/new", element: <GuestFormPage /> },
       { path: "guests/:id", element: <GuestFormPage /> },
 
+      // Reservations
       { path: "reservations", element: <Reservations /> },
       { path: "reservations/new", element: <ReservationFormPage /> },
-
-      //  Reservation detail (this was missing)
       { path: "reservations/:id", element: <ReservationDetailPage /> },
-
-      //  Reservation edit (explicit)
       { path: "reservations/:id/edit", element: <ReservationFormPage /> },
 
-      // Payments both (admin + receptionist)
+      // Payments
       { path: "payments", element: <Payments /> },
 
-      //  Charges (consumptions)
+      // Charges
       { path: "charges", element: <ChargesPage /> },
 
-      //  Police report CSV
+      // Police report
       { path: "police-report", element: <PoliceReportPage /> },
 
-      /**
-       * Admin employees section.
-       * URL: /admin/employees
-       */
+      // Hotel settings (admin-only)
+      {
+        path: "hotel-settings",
+        element: (
+          <AdminRoute>
+            <HotelSettingsPage />
+          </AdminRoute>
+        ),
+      },
+
+      // Admin employees section
       {
         path: "admin/employees",
         element: (

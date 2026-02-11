@@ -12,6 +12,8 @@ import usersRoutes from "./users.routes";
 import chargesRoutes from "./charges.routes";
 import stayRegistrationRoutes from "./stayRegistration.routes";
 import planningRoutes from "./planning.routes";
+import dailyCloseRoutes from "./dailyClose.routes";
+import hotelRoutes from "./hotel.routes";
 
 const router = Router();
 
@@ -58,6 +60,15 @@ router.use("/guests", guestRoutes);
 router.use("/payments", paymentsRoutes);
 router.use("/users", usersRoutes);
 router.use("/planning", planningRoutes);
+router.use("/daily-close", dailyCloseRoutes);
+
+/**
+ * Hotel settings (tenant metadata for RIHP exports)
+ * Routes:
+ * - GET  /api/hotel/me
+ * - PUT  /api/hotel/me   (admin only inside hotel.routes)
+ */
+router.use("/hotel", hotelRoutes);
 
 /**
  * New modules:
@@ -69,7 +80,7 @@ router.use("/planning", planningRoutes);
  * - POST   /bookings/:id/stay-registration
  * - GET    /reports/police              (CSV)
  * - GET    /reports/police/pdf          (PDF list)
- * - GET    /bookings/:id/stay-registration/pdf   ✅ (PDF single booking)
+ * - GET    /bookings/:id/stay-registration/pdf    (PDF single booking)
  *
  * So I mount it at "/" to keep those paths exactly as defined.
  */

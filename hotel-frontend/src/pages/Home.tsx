@@ -37,32 +37,52 @@ interface LatestPayment {
 type SeriesPoint = { date: string; value: number };
 
 interface DashboardData {
-  // Here I keep the "original" dashboard fields so older backend responses still work.
   totalRooms: number;
   occupancyRate: number;
   activeBookingsCount: number;
+
+  /**
+   * Here I use totalRevenue as "completed payments revenue" for the selected range (7/30 days).
+   * This is more professional than showing all-time on the main dashboard.
+   */
   totalRevenue: number;
+
   todaysCheckIns: number;
   todaysCheckOuts: number;
   latestBookings: LatestBooking[];
   latestPayments: LatestPayment[];
 
-  // Here I keep some optional debug fields (useful while I verify timezone correctness).
+  // Optional debug fields (useful while validating TZ)
   serverNow?: string | null;
   tz?: string | null;
+  tzOffsetMinutes?: number;
 
-  // Here I keep newer optional fields that the backend may send.
+  // Optional operational fields
   maintenanceRooms?: number;
   availableRooms?: number;
   occupiedRoomsToday?: number;
   pendingBookingsCount?: number;
   pendingPaymentsCount?: number;
+
+  // Optional chart fields
   rangeDays?: number;
   revenueSeries?: SeriesPoint[];
   occupiedRoomsSeries?: SeriesPoint[];
   occupancyRateSeries?: SeriesPoint[];
-  tzOffsetMinutes?: number;
 }
+
+/**
+ * Here I keep a small shape for the Daily Close record.
+ * I only read what I need for the dashboard widget.
+ */
+type DailyCloseRecord = {
+  id: number;
+  dateKey: string;
+  totalCompleted: number;
+  countCompleted: number;
+  createdAt: string;
+  createdBy?: { id: number; name: string; role: string } | null;
+};
 
 /**
  * Here I convert a date string into a real Date safely.
@@ -71,6 +91,17 @@ interface DashboardData {
 function toDate(value: string) {
   const d = new Date(value);
   return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Here I format YYYY-MM-DD for “today” using local time.
+ * This matches the <input type="date" /> behavior on the client.
+ */
+function toDateOnlyISO(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export default function Home() {
@@ -97,6 +128,21 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isDev = import.meta.env.DEV;
+
+  /**
+   * Here I store today's daily close status for the dashboard widget.
+   */
+  const [todayClose, setTodayClose] = useState<{
+    dateKey: string;
+    record: DailyCloseRecord | null;
+    loading: boolean;
+  }>({
+    dateKey: toDateOnlyISO(new Date()),
+    record: null,
+    loading: false,
+  });
+
   /**
    * Here I format money in UYU (Uruguay pesos).
    */
@@ -121,8 +167,42 @@ export default function Home() {
   };
 
   /**
+   * Here I load whether today's daily close exists.
+   * I call GET /daily-close?from=YYYY-MM-DD&to=YYYY-MM-DD and take the first record (if any).
+   *
+   * Note:
+   * - I keep this request silent (no global toasts, no blocking loaders).
+   * - If it fails, the dashboard should still work.
+   */
+  const loadTodayClose = async () => {
+    const dateKey = toDateOnlyISO(new Date());
+
+    try {
+      setTodayClose((p) => ({ ...p, loading: true }));
+
+      const res = await api.get("/daily-close", {
+        params: { from: dateKey, to: dateKey },
+        silentErrorToast: true,
+        silentLoading: true,
+      } as any);
+
+      const payload = res.data?.data ?? res.data;
+      const list = Array.isArray(payload) ? (payload as DailyCloseRecord[]) : [];
+
+      setTodayClose({
+        dateKey,
+        record: list.length > 0 ? list[0] : null,
+        loading: false,
+      });
+    } catch {
+      // Here I do not break the dashboard if this fails.
+      setTodayClose((p) => ({ ...p, dateKey, record: null, loading: false }));
+    }
+  };
+
+  /**
    * Here I load dashboard data from the backend.
-   * I use "silent" when I don't want to show a loading spinner (ex: range changes).
+   * I use "silent" when I don't want to show a loading spinner (e.g., range changes).
    */
   const loadData = async (opts?: { silent?: boolean }) => {
     const silent = !!opts?.silent;
@@ -131,12 +211,16 @@ export default function Home() {
       if (!silent) setLoading(true);
       setError(null);
 
-      const res = await api.get("/dashboard", {
-        params: { range: rangeDays },
-      });
+      /**
+       * Here I fetch dashboard data and today's close in parallel.
+       * This keeps the UI fast and avoids extra waiting time.
+       */
+      const [dashboardRes] = await Promise.all([
+        api.get("/dashboard", { params: { range: rangeDays } }),
+        loadTodayClose(),
+      ]);
 
-      // Here I support both shapes: { data: ... } or direct payload.
-      const payload = res.data?.data ?? res.data;
+      const payload = dashboardRes.data?.data ?? dashboardRes.data;
 
       /**
        * Here I merge safely:
@@ -168,7 +252,7 @@ export default function Home() {
             ? payload.tzOffsetMinutes
             : prev.tzOffsetMinutes,
 
-        // Optional newer fields
+        // Operational fields
         maintenanceRooms:
           typeof payload?.maintenanceRooms === "number"
             ? payload.maintenanceRooms
@@ -190,11 +274,11 @@ export default function Home() {
             ? payload.pendingPaymentsCount
             : prev.pendingPaymentsCount,
 
+        // Chart fields
         rangeDays:
           typeof payload?.rangeDays === "number"
             ? payload.rangeDays
             : prev.rangeDays,
-
         revenueSeries: Array.isArray(payload?.revenueSeries)
           ? payload.revenueSeries
           : prev.revenueSeries,
@@ -263,6 +347,11 @@ export default function Home() {
   const pendingBookings = data.pendingBookingsCount ?? null;
   const pendingPayments = data.pendingPaymentsCount ?? null;
 
+  /**
+   * Here I derive “Open/Closed” from the record existence.
+   */
+  const isClosedToday = !!todayClose.record;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -304,19 +393,16 @@ export default function Home() {
                 Occupancy, activity and revenue at a glance.
               </p>
 
-              {/* Here I show debug info only when backend sends it. */}
-              {(data.serverNow || data.tz || data.tzOffsetMinutes != null) && (
-                <p className="text-xs text-slate-400 mt-2">
-                  Server time: {data.serverNow ?? "-"}{" "}
-                  {data.tz ? `(TZ: ${data.tz})` : ""}
-                  {data.tzOffsetMinutes != null
-                    ? ` (offset: ${data.tzOffsetMinutes}m)`
-                    : ""}
-                </p>
-              )}
-            </div>
+              {/* Optional debug info (you can remove this later if you want a cleaner UI). */}
+              {isDev && (data.serverNow || data.tz || data.tzOffsetMinutes != null) && (
+  <p className="text-xs text-slate-400 mt-2">
+    Server time: {data.serverNow ?? "-"}{" "}
+    {data.tz ? `(TZ: ${data.tz})` : ""}
+    {data.tzOffsetMinutes != null ? ` (offset: ${data.tzOffsetMinutes}m)` : ""}
+  </p>
+)}
 
-            {/* ✅ Here I removed the "Demo production" badge because this is a real app now. */}
+            </div>
           </div>
         </CardBody>
       </Card>
@@ -355,14 +441,15 @@ export default function Home() {
           </CardBody>
         </Card>
 
+        {/* ✅ Professional change: show revenue aligned with the selected range */}
         <Card>
           <CardBody>
-            <p className="text-xs text-slate-500">Revenue (completed)</p>
+            <p className="text-xs text-slate-500">Revenue (period)</p>
             <p className="text-2xl font-semibold mt-1">
               {formatCurrency(data.totalRevenue)}
             </p>
             <p className="text-xs text-slate-400 mt-1">
-              Total completed payments (all time).
+              Completed payments in the selected range (Last {rangeDays} days).
             </p>
           </CardBody>
         </Card>
@@ -380,78 +467,156 @@ export default function Home() {
         </Card>
       </div>
 
-      {/* Alerts */}
-      {(pendingBookings != null ||
-        pendingPayments != null ||
-        maintenanceRoomsLabel != null) && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardBody>
-              <p className="text-xs text-slate-500">Pending reservations</p>
-              <p className="text-2xl font-semibold mt-1">
-                {pendingBookings ?? "-"}
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Reservations that may need confirmation.
-              </p>
-              <div className="mt-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="text-xs px-3 py-1"
-                  onClick={() => navigate("/reservations")}
-                >
-                  Go to reservations →
-                </Button>
+      {/* Operational cards (alerts + daily close) */}
+      <div className="grid gap-4 md:grid-cols-4">
+        {/* Daily close status card */}
+        <Card>
+          <CardBody>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs text-slate-500">Daily close (today)</p>
+                <p className="text-lg font-semibold mt-1">
+                  {todayClose.dateKey}
+                </p>
               </div>
-            </CardBody>
-          </Card>
 
-          <Card>
-            <CardBody>
-              <p className="text-xs text-slate-500">Pending payments</p>
-              <p className="text-2xl font-semibold mt-1">
-                {pendingPayments ?? "-"}
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Payments marked as pending.
-              </p>
-              <div className="mt-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="text-xs px-3 py-1"
-                  onClick={() => navigate("/payments")}
-                >
-                  Go to payments →
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
+              <Badge variant={isClosedToday ? "success" : "warning"}>
+                {todayClose.loading
+                  ? "Checking..."
+                  : isClosedToday
+                  ? "CLOSED"
+                  : "OPEN"}
+              </Badge>
+            </div>
 
-          <Card>
-            <CardBody>
-              <p className="text-xs text-slate-500">Maintenance rooms</p>
-              <p className="text-2xl font-semibold mt-1">
-                {maintenanceRoomsLabel ?? "-"}
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                These rooms are excluded from availability.
-              </p>
-              <div className="mt-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="text-xs px-3 py-1"
-                  onClick={() => navigate("/rooms")}
-                >
-                  Review rooms →
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-      )}
+            <div className="mt-3 text-xs text-slate-500 space-y-1">
+              {todayClose.loading ? (
+                <p>Loading daily close status...</p>
+              ) : isClosedToday && todayClose.record ? (
+                <>
+                  <p>
+                    Closed by{" "}
+                    <span className="font-medium text-slate-700">
+                      {todayClose.record.createdBy?.name ?? "unknown"}
+                    </span>
+                  </p>
+                  <p>
+                    At{" "}
+                    <span className="font-medium text-slate-700">
+                      {toDate(todayClose.record.createdAt)?.toLocaleString() ??
+                        "-"}
+                    </span>
+                  </p>
+                  <p>
+                    Total{" "}
+                    <span className="font-medium text-slate-700">
+                      {formatCurrency(
+                        Number(todayClose.record.totalCompleted ?? 0)
+                      )}
+                    </span>{" "}
+                    · Count{" "}
+                    <span className="font-medium text-slate-700">
+                      {Number(todayClose.record.countCompleted ?? 0)}
+                    </span>
+                  </p>
+                </>
+              ) : (
+                <p>No close recorded yet for today.</p>
+              )}
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                onClick={() => navigate("/daily-close")}
+              >
+                Open daily close →
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="text-xs px-3 py-1"
+                onClick={() => loadTodayClose()}
+                disabled={todayClose.loading}
+              >
+                Refresh
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Pending reservations */}
+        <Card>
+          <CardBody>
+            <p className="text-xs text-slate-500">Pending reservations</p>
+            <p className="text-2xl font-semibold mt-1">
+              {pendingBookings ?? "-"}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              Reservations that may need confirmation.
+            </p>
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                onClick={() => navigate("/reservations")}
+              >
+                Go to reservations →
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Pending payments */}
+        <Card>
+          <CardBody>
+            <p className="text-xs text-slate-500">Pending payments</p>
+            <p className="text-2xl font-semibold mt-1">
+              {pendingPayments ?? "-"}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              Payments marked as pending.
+            </p>
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                onClick={() => navigate("/payments")}
+              >
+                Go to payments →
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Maintenance rooms */}
+        <Card>
+          <CardBody>
+            <p className="text-xs text-slate-500">Maintenance rooms</p>
+            <p className="text-2xl font-semibold mt-1">
+              {maintenanceRoomsLabel ?? "-"}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              These rooms are excluded from availability.
+            </p>
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="text-xs px-3 py-1"
+                onClick={() => navigate("/rooms")}
+              >
+                Review rooms →
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      </div>
 
       {/* Revenue mini chart */}
       <Card>

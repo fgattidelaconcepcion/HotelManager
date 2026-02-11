@@ -115,10 +115,11 @@ export default function PoliceReportPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Police report"
-        description="Export stay registrations for police reporting (CSV or printable PDF)."
-      />
+     <p className="text-xs text-slate-500 mt-3">
+  This export includes only the required RIHP fields:
+  full name, document number, nationality, birth date, accommodation code,
+  and stay dates (entry/exit).
+</p>
 
       {error && (
         <Card>
@@ -131,7 +132,7 @@ export default function PoliceReportPage() {
       )}
 
       {/* Admin-only exports (because the backend is admin-only too) */}
-      <RoleGate allowed={["admin"]}>
+      <RoleGate allowed={["admin", "receptionist"]}>
         <Card>
           <CardBody>
             <div className="max-w-4xl">
