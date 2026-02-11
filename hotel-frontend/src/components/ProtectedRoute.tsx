@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { useAuth, type UserRole } from "../auth/AuthContext";
 
 /**
@@ -21,8 +21,6 @@ export default function ProtectedRoute({
    */
   const { isAuthenticated, user, isAuthReady } = useAuth();
 
-  const location = useLocation();
-
   /**
    * Here I wait until auth bootstrapping is done.
    * This avoids the "refresh => goes to login" bug.
@@ -35,12 +33,12 @@ export default function ProtectedRoute({
     );
   }
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+  /**
+   *  Since we decided that login should ALWAYS go to the dashboard,
+   * I don't need to store a "from" location anymore.
+   */
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />;
   }
 
   if (allowedRoles?.length && !allowedRoles.includes(user.role)) {

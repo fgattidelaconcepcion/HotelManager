@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../api/api";
 import { Card, CardBody } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -42,22 +42,12 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
-  const location = useLocation();
 
   /**
    * Here I use AuthContext to persist token/user after successful login.
    * AuthContext should be the single source of truth for auth state.
    */
   const { login } = useAuth();
-
-  /**
-   * Here I compute where to redirect after login.
-   * If ProtectedRoute sent the user here, it usually includes "from".
-   */
-  const from =
-    (location.state as any)?.from?.pathname ||
-    (location.state as any)?.from ||
-    "/";
 
   /**
    * Here I clear the inline error as soon as the user changes input.
@@ -82,7 +72,7 @@ export default function Login() {
 
     try {
       /**
-       * ✅ Important:
+       * Important:
        * - silentErrorToast: I don't want global toasts for login errors
        * - ignoreAuthRedirect: prevents the Axios interceptor from force-logout on 401 during login
        */
@@ -111,11 +101,17 @@ export default function Login() {
       localStorage.setItem("hotelCode", hotelCode.trim());
 
       toast.success("Logged in successfully");
-      navigate(from, { replace: true });
+
+      /**
+       *  Key behavior (what you requested):
+       * Here I ALWAYS redirect to the dashboard after login,
+       * ignoring any previous location ("from") history.
+       */
+      navigate("/", { replace: true });
     } catch (err: unknown) {
       /**
        * Here I prefer backend errors (error/message) and fallback to axios message.
-       * This is useful because your backend returns { error, code, details } often.
+       * This is useful because my backend returns { error, code, details } often.
        */
       const message = axios.isAxiosError(err)
         ? (err.response?.data as any)?.error ||

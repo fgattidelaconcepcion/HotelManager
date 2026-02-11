@@ -63,9 +63,14 @@ export default function Layout() {
   }, [location.pathname, navItems]);
 
   const handleLogout = () => {
-    logout();
-    navigate("/login", { replace: true });
-  };
+  logout();
+
+  navigate("/login", {
+    replace: true,
+    state: { reason: "logout" },
+  });
+};
+
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
