@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import prisma from "../services/prisma";
 import type { AuthRequest } from "../middlewares/authMiddleware";
+import { auditLog } from "../services/audit.service";
 
 /**
  * Here I parse "YYYY-MM-DD" and return a UTC day range [start, end).
@@ -144,7 +145,7 @@ export const createDailyClose = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Prevent duplicate closes
+    // Here I prevent duplicate closes
     const existing = await prisma.dailyClose.findUnique({
       where: { hotelId_dateKey: { hotelId, dateKey } },
       select: { id: true },
@@ -158,7 +159,7 @@ export const createDailyClose = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Recompute totals server-side (never trust client totals)
+    // Here I recompute totals server-side (never trust client totals)
     const payments = await prisma.payment.findMany({
       where: {
         status: { in: [...COMPLETED_STATUSES] },
@@ -189,6 +190,22 @@ export const createDailyClose = async (req: AuthRequest, res: Response) => {
       },
       include: {
         createdBy: { select: { id: true, name: true, email: true, role: true } },
+      },
+    });
+
+    //  Here I audit daily close creation (money-related and operationally critical).
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId: createdById,
+      action: "DAILY_CLOSE_CREATED",
+      entityType: "DailyClose",
+      entityId: created.id,
+      metadata: {
+        dateKey,
+        totalCompleted,
+        countCompleted,
+        byMethod,
       },
     });
 

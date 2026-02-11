@@ -1,39 +1,12 @@
-import { Request, Response, NextFunction } from "express";
-import jwt, { JwtPayload } from "jsonwebtoken";
-
-/**
- * Here I load the JWT secret from environment variables.
- * I fail fast if it is not configured, because auth must never run without it.
- */
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET is not set in environment variables");
-}
-
-/**
- * Here I define the roles allowed in my application.
- * I use this type for authorization and role checks.
- */
-export type UserRole = "admin" | "receptionist";
-
-/**
- * Here I describe the structure of the decoded JWT payload.
- * I include hotelId so I can enforce multi-tenant isolation on every request.
- */
-export interface AuthUser extends JwtPayload {
-  id: number;
-  hotelId: number;
-  email: string;
-  role: UserRole;
-  name?: string;
-  hotelCode?: string;
-}
+import type { Response, NextFunction, Request } from "express";
+import { verifyToken, type UserRole, type TokenPayload } from "../utils/jwt";
 
 /**
  * Here I extend Express Request to include the authenticated user.
  */
 export interface AuthRequest extends Request {
-  user?: AuthUser;
+  user?: TokenPayload;
+  requestId?: string;
 }
 
 /**
@@ -57,66 +30,46 @@ function getBearerToken(req: Request): string | null {
  * - Attaches user info to req.user
  * - Blocks unauthenticated requests
  */
-export const authMiddleware = (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  // Here I try to read the Bearer token from the request
+export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
   const token = getBearerToken(req);
 
-  // Here I block the request if no token is provided
   if (!token) {
     return res.status(401).json({
       success: false,
       code: "AUTH_TOKEN_MISSING",
       error: "Unauthorized: token not provided",
+      requestId: req.requestId,
     });
   }
 
   try {
-    // Here I verify and decode the JWT using the secret
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
+    const decoded = verifyToken(token);
 
-    /**
-     * Here I validate that the token contains the minimum required fields.
-     * This prevents malformed or tampered tokens from being accepted.
-     */
-    if (
-      !decoded ||
-      typeof decoded !== "object" ||
-      !decoded.role ||
-      !decoded.email ||
-      !decoded.id ||
-      !decoded.hotelId
-    ) {
+    // Here I validate minimum required fields to protect against malformed tokens.
+    if (!decoded?.id || !decoded?.hotelId || !decoded?.email || !decoded?.role) {
       return res.status(401).json({
         success: false,
         code: "AUTH_TOKEN_INVALID",
-        error: "Invalid token",
+        error: "Invalid token payload",
+        requestId: req.requestId,
       });
     }
 
-    // Here I attach the authenticated user to the request object
     req.user = decoded;
-
-    // Here I allow the request to continue to the next middleware/controller
     return next();
   } catch (err: any) {
-    /**
-     * Here I distinguish between expired tokens and other invalid tokens
-     * to return clearer error messages to the client.
-     */
-    const code =
-      err?.name === "TokenExpiredError"
-        ? "AUTH_TOKEN_EXPIRED"
-        : "AUTH_TOKEN_INVALID";
+    const isExpired = err?.name === "TokenExpiredError";
 
     return res.status(401).json({
       success: false,
-      code,
-      error:
-        err?.name === "TokenExpiredError" ? "Token expired" : "Invalid token",
+      code: isExpired ? "AUTH_TOKEN_EXPIRED" : "AUTH_TOKEN_INVALID",
+      error: isExpired ? "Token expired" : "Invalid token",
+      requestId: req.requestId,
     });
   }
-};
+}
+
+/**
+ * I export the UserRole type so other middlewares (authorizeRoles) can reuse it.
+ */
+export type { UserRole };

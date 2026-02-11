@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import prisma from "../services/prisma";
 import type { AuthRequest } from "../middlewares/authMiddleware";
+import { auditLog } from "../services/audit.service";
 import PDFDocument from "pdfkit";
 
 /**
@@ -41,25 +42,24 @@ export const createStayRegistrationForBooking = async (
 ) => {
   try {
     const hotelId = req.user?.hotelId;
-    const createdById = req.user?.id;
+    const createdById = req.user?.id ?? null;
 
     if (!hotelId) {
-      return res
-        .status(401)
-        .json({ success: false, error: "Missing hotel context" });
+      return res.status(401).json({
+        success: false,
+        error: "Missing hotel context",
+      });
     }
 
     const bookingId = Number(req.params.id);
     if (Number.isNaN(bookingId)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid booking ID" });
+      return res.status(400).json({
+        success: false,
+        error: "Invalid booking ID",
+      });
     }
 
-    /**
-     * Here I enforce tenant isolation: booking must belong to the current hotel.
-     * I also include guest + room so I can snapshot data.
-     */
+    // Tenant isolation: booking must belong to this hotel
     const booking = await prisma.booking.findFirst({
       where: { id: bookingId, hotelId },
       include: { room: true, guest: true },
@@ -81,9 +81,7 @@ export const createStayRegistrationForBooking = async (
       });
     }
 
-    /**
-     * Here I ensure idempotency: one snapshot per booking.
-     */
+    // Idempotency: one snapshot per booking
     const existing = await prisma.stayRegistration.findUnique({
       where: { bookingId },
     });
@@ -96,9 +94,7 @@ export const createStayRegistrationForBooking = async (
       });
     }
 
-    /**
-     * Here I load hotel info because RIHP also requires establishment details.
-     */
+    // Load hotel info (RIHP establishment info)
     const hotel = await prisma.hotel.findUnique({
       where: { id: hotelId },
       select: { address: true, responsibleName: true, registrationNumber: true },
@@ -106,20 +102,13 @@ export const createStayRegistrationForBooking = async (
 
     const g = booking.guest;
 
-    /**
-     * Here I create the snapshot:
-     * - Guest identity fields (RIHP)
-     * - Guest extra fields (maritalStatus / occupation / provenance)
-     * - Hotel establishment fields (address / responsible / registrationNumber)
-     * - Stay dates
-     */
     const created = await prisma.stayRegistration.create({
       data: {
         hotelId,
         bookingId: booking.id,
         roomId: booking.roomId,
         guestId: g.id,
-        createdById: createdById ?? null,
+        createdById,
 
         // Guest snapshot
         guestName: g.name,
@@ -136,7 +125,7 @@ export const createStayRegistrationForBooking = async (
         city: (g as any).city ?? null,
         country: (g as any).country ?? null,
 
-        //  RIHP extra guest fields
+        // RIHP extra guest fields
         maritalStatus: (g as any).maritalStatus ?? null,
         occupation: (g as any).occupation ?? null,
         provenance: (g as any).provenance ?? null,
@@ -154,37 +143,45 @@ export const createStayRegistrationForBooking = async (
       },
     });
 
+    // Audit (high value operational/legal snapshot)
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId: createdById,
+      action: "STAY_REGISTRATION_CREATED",
+      entityType: "StayRegistration",
+      entityId: created.id,
+      metadata: {
+        bookingId: created.bookingId,
+        guestId: created.guestId,
+        roomId: created.roomId,
+        scheduledCheckIn: created.scheduledCheckIn,
+        scheduledCheckOut: created.scheduledCheckOut,
+      },
+    });
+
     return res.status(201).json({ success: true, data: created });
   } catch (error) {
     console.error("Error in createStayRegistrationForBooking:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: "Error creating stay registration" });
+    return res.status(500).json({
+      success: false,
+      error: "Error creating stay registration",
+    });
   }
 };
 
 /**
  * GET /api/reports/police?from=YYYY-MM-DD&to=YYYY-MM-DD
  * CSV export (RIHP - Uruguay)
- *
- * Required fields for your screenshot:
- * - Guest full name
- * - Document type + number
- * - Nationality
- * - Birth date (or age)
- * - Marital status
- * - Occupation
- * - Provenance (habitual residence)
- * - Stay details: entry/exit + room number
- * - Establishment info: address, responsible name, registration number
  */
 export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
     if (!hotelId) {
-      return res
-        .status(401)
-        .json({ success: false, error: "Missing hotel context" });
+      return res.status(401).json({
+        success: false,
+        error: "Missing hotel context",
+      });
     }
 
     const fromD = parseQueryDate(req.query.from);
@@ -194,9 +191,6 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
     if (fromD) where.createdAt = { ...(where.createdAt ?? {}), gte: fromD };
     if (toD) where.createdAt = { ...(where.createdAt ?? {}), lte: toD };
 
-    /**
-     * Here I fetch stay registrations plus room number for the RIHP stay detail.
-     */
     const rows = await prisma.stayRegistration.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -233,19 +227,19 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
       ...rows.map((r) =>
         [
           r.guestName ?? "",
-          r.documentType ?? "",
-          r.documentNumber ?? "",
-          r.nationality ?? "",
-          r.birthDate ? r.birthDate.toISOString().slice(0, 10) : "",
-          r.maritalStatus ?? "",
-          r.occupation ?? "",
-          r.provenance ?? "",
-          r.scheduledCheckIn ? r.scheduledCheckIn.toISOString().slice(0, 10) : "",
-          r.scheduledCheckOut ? r.scheduledCheckOut.toISOString().slice(0, 10) : "",
+          (r as any).documentType ?? "",
+          (r as any).documentNumber ?? "",
+          (r as any).nationality ?? "",
+          (r as any).birthDate ? fmtDate((r as any).birthDate) : "",
+          (r as any).maritalStatus ?? "",
+          (r as any).occupation ?? "",
+          (r as any).provenance ?? "",
+          r.scheduledCheckIn ? fmtDate(r.scheduledCheckIn) : "",
+          r.scheduledCheckOut ? fmtDate(r.scheduledCheckOut) : "",
           r.room?.number ?? "",
-          r.hotelAddress ?? "",
-          r.hotelResponsibleName ?? "",
-          r.hotelRegistrationNumber ?? "",
+          (r as any).hotelAddress ?? "",
+          (r as any).hotelResponsibleName ?? "",
+          (r as any).hotelRegistrationNumber ?? "",
         ]
           .map(escape)
           .join(",")
@@ -261,25 +255,25 @@ export const exportPoliceReportCsv = async (req: AuthRequest, res: Response) => 
     return res.status(200).send(lines);
   } catch (error) {
     console.error("Error in exportPoliceReportCsv:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: "Error exporting report" });
+    return res.status(500).json({
+      success: false,
+      error: "Error exporting report",
+    });
   }
 };
 
 /**
  * GET /api/reports/police/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD
  * PDF export (RIHP - Uruguay)
- *
- * Same fields as CSV, formatted for printing.
  */
 export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
     if (!hotelId) {
-      return res
-        .status(401)
-        .json({ success: false, error: "Missing hotel context" });
+      return res.status(401).json({
+        success: false,
+        error: "Missing hotel context",
+      });
     }
 
     const from = typeof req.query.from === "string" ? req.query.from : "";
@@ -345,15 +339,6 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
 
     const tableW = cols.reduce((s, c) => s + c.w, 0);
 
-    const ensureSpace = (needed: number) => {
-      const bottom = doc.page.height - doc.page.margins.bottom;
-      if (y + needed > bottom) {
-        doc.addPage();
-        y = doc.page.margins.top;
-        drawHeader();
-      }
-    };
-
     const drawHeader = () => {
       doc.fontSize(9).fillColor("#000");
       doc.save().rect(startX, y, tableW, 20).fill("#F2F2F2").restore();
@@ -380,12 +365,21 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
       y += 2;
     };
 
+    const ensureSpace = (needed: number) => {
+      const bottom = doc.page.height - doc.page.margins.bottom;
+      if (y + needed > bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader();
+      }
+    };
+
     const rowValues = (r: any) => {
-      const docLabel = `${r.documentType ?? ""} ${r.documentNumber ?? ""}`.trim();
+      const docLabel = `${(r as any).documentType ?? ""} ${(r as any).documentNumber ?? ""}`.trim();
       const hotelInfo = [
-        r.hotelAddress ? `Addr: ${r.hotelAddress}` : null,
-        r.hotelResponsibleName ? `Resp: ${r.hotelResponsibleName}` : null,
-        r.hotelRegistrationNumber ? `Reg#: ${r.hotelRegistrationNumber}` : null,
+        (r as any).hotelAddress ? `Addr: ${(r as any).hotelAddress}` : null,
+        (r as any).hotelResponsibleName ? `Resp: ${(r as any).hotelResponsibleName}` : null,
+        (r as any).hotelRegistrationNumber ? `Reg#: ${(r as any).hotelRegistrationNumber}` : null,
       ]
         .filter(Boolean)
         .join(" · ");
@@ -393,11 +387,11 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
       return {
         guestName: r.guestName ?? "",
         doc: docLabel,
-        nationality: r.nationality ?? "",
-        birthDate: r.birthDate ? fmtDate(r.birthDate) : "",
-        maritalStatus: r.maritalStatus ?? "",
-        occupation: r.occupation ?? "",
-        provenance: r.provenance ?? "",
+        nationality: (r as any).nationality ?? "",
+        birthDate: (r as any).birthDate ? fmtDate((r as any).birthDate) : "",
+        maritalStatus: (r as any).maritalStatus ?? "",
+        occupation: (r as any).occupation ?? "",
+        provenance: (r as any).provenance ?? "",
         checkIn: r.scheduledCheckIn ? fmtDate(r.scheduledCheckIn) : "",
         checkOut: r.scheduledCheckOut ? fmtDate(r.scheduledCheckOut) : "",
         roomNumber: r.room?.number ?? "",
@@ -471,8 +465,7 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
         doc.page.height - doc.page.margins.bottom + 8,
         {
           align: "right",
-          width:
-            doc.page.width - doc.page.margins.left - doc.page.margins.right,
+          width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
         }
       );
     }
@@ -480,19 +473,16 @@ export const exportPoliceReportPdf = async (req: AuthRequest, res: Response) => 
     doc.end();
   } catch (error) {
     console.error("Error in exportPoliceReportPdf:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: "Error exporting PDF report" });
+    return res.status(500).json({
+      success: false,
+      error: "Error exporting PDF report",
+    });
   }
 };
 
 /**
  * GET /api/bookings/:id/stay-registration/pdf
  * Single booking printable police form.
- *
- * NOTE:
- * You can keep your existing one; it already includes many fields.
- * If you want, later we can update it to also show marital/occupation/provenance + establishment fields.
  */
 export const exportStayRegistrationPdfByBooking = async (
   req: AuthRequest,
@@ -500,19 +490,21 @@ export const exportStayRegistrationPdfByBooking = async (
 ) => {
   try {
     const hotelId = req.user?.hotelId;
-    const createdById = req.user?.id;
+    const createdById = req.user?.id ?? null;
 
     if (!hotelId) {
-      return res
-        .status(401)
-        .json({ success: false, error: "Missing hotel context" });
+      return res.status(401).json({
+        success: false,
+        error: "Missing hotel context",
+      });
     }
 
     const bookingId = Number(req.params.id);
     if (Number.isNaN(bookingId)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid booking ID" });
+      return res.status(400).json({
+        success: false,
+        error: "Invalid booking ID",
+      });
     }
 
     const booking = await prisma.booking.findFirst({
@@ -545,6 +537,7 @@ export const exportStayRegistrationPdfByBooking = async (
       },
     });
 
+    // If snapshot doesn't exist, I create it on demand (idempotent)
     if (!snap) {
       const g = booking.guest;
 
@@ -587,13 +580,24 @@ export const exportStayRegistrationPdfByBooking = async (
           scheduledCheckIn: booking.checkIn,
           scheduledCheckOut: booking.checkOut,
           checkedInAt: booking.checkedInAt ?? null,
-          checkedOutAt: booking.checkedOutAt ?? /* FIX */ null,
+          checkedOutAt: booking.checkedOutAt ?? null, // ✅ fixed
         },
         include: {
           room: { select: { number: true, floor: true } },
           createdBy: { select: { id: true, name: true, email: true, role: true } },
           hotel: { select: { id: true, name: true, code: true } },
         },
+      });
+
+      // Audit for auto-creation (useful when PDFs are generated before check-in flow creates it)
+      await auditLog({
+        req,
+        hotelId,
+        actorUserId: createdById,
+        action: "STAY_REGISTRATION_AUTO_CREATED",
+        entityType: "StayRegistration",
+        entityId: snap.id,
+        metadata: { bookingId: snap.bookingId },
       });
     }
 
@@ -636,7 +640,7 @@ export const exportStayRegistrationPdfByBooking = async (
     };
 
     section("Guest information (RIHP)");
-    field("Full name", snap.guestName);
+    field("Full name", (snap as any).guestName);
     field("Document type", (snap as any).documentType ?? "-");
     field("Document number", (snap as any).documentNumber ?? "-");
     field("Nationality", (snap as any).nationality ?? "-");
@@ -670,8 +674,9 @@ export const exportStayRegistrationPdfByBooking = async (
     doc.end();
   } catch (error) {
     console.error("Error in exportStayRegistrationPdfByBooking:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: "Error exporting stay registration PDF" });
+    return res.status(500).json({
+      success: false,
+      error: "Error exporting stay registration PDF",
+    });
   }
 };

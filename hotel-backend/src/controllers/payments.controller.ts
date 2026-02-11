@@ -2,6 +2,7 @@ import type { Response } from "express";
 import prisma from "../services/prisma";
 import { z } from "zod";
 import type { AuthRequest } from "../middlewares/authMiddleware";
+import { auditLog } from "../services/audit.service";
 
 /* =====================================
       LOCAL STATUS (APP LEVEL)
@@ -55,7 +56,7 @@ async function getCompletedPaidForBooking(bookingId: number, excludePaymentId?: 
 }
 
 /**
- *   Here I calculate the charges total for a booking.
+ * Here I calculate the charges total for a booking.
  * Charges live in their own table, so I sum Charge.total for this booking.
  */
 async function getChargesTotalForBooking(bookingId: number) {
@@ -68,7 +69,7 @@ async function getChargesTotalForBooking(bookingId: number) {
 }
 
 /**
- *  Here I compute a "grand total" for a booking:
+ * Here I compute a "grand total" for a booking:
  * - roomTotal comes from Booking.totalPrice (Float)
  * - chargesTotal comes from Charge.total (Int)
  *
@@ -100,9 +101,7 @@ export const getAllPayments = async (req: AuthRequest, res: Response) => {
      * Here I scope payments by traversing the relation:
      * Payment -> Booking -> hotelId
      */
-    const where: any = {
-      booking: { hotelId },
-    };
+    const where: any = { booking: { hotelId } };
 
     if (bookingId && !isNaN(Number(bookingId))) {
       // Here I optionally filter by bookingId (still scoped by booking.hotelId)
@@ -168,7 +167,7 @@ export const getPaymentById = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * NEW: GET /api/payments/booking/:bookingId/summary
+ * GET /api/payments/booking/:bookingId/summary
  * Here I return a clean financial summary for one reservation:
  * - roomTotal
  * - chargesTotal
@@ -210,14 +209,7 @@ export const getBookingPaymentSummary = async (req: AuthRequest, res: Response) 
 
     return res.status(200).json({
       success: true,
-      data: {
-        bookingId,
-        roomTotal,
-        chargesTotal,
-        grandTotal,
-        paidCompleted,
-        dueAmount,
-      },
+      data: { bookingId, roomTotal, chargesTotal, grandTotal, paidCompleted, dueAmount },
     });
   } catch (error) {
     console.error("Error in getBookingPaymentSummary:", error);
@@ -229,6 +221,8 @@ export const getBookingPaymentSummary = async (req: AuthRequest, res: Response) 
 export const createPayment = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
+    const actorUserId = req.user?.id ?? null;
+
     if (!hotelId) {
       return res.status(401).json({ success: false, error: "Missing hotel context" });
     }
@@ -260,8 +254,6 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
     /**
      * Critical fix:
      * Here I include charges in the maximum payable amount.
-     * Before: I compared against booking.totalPrice only (room total).
-     * Now: I compare against grandTotal = roomTotal + chargesTotal.
      */
     const chargesTotal = await getChargesTotalForBooking(data.bookingId);
     const grandTotal = computeGrandTotal(booking.totalPrice ?? 0, chargesTotal);
@@ -298,6 +290,22 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // Here I audit payment creation (money-related).
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "PAYMENT_CREATED",
+      entityType: "Payment",
+      entityId: payment.id,
+      metadata: {
+        bookingId: payment.bookingId,
+        amount: payment.amount,
+        method: payment.method,
+        status: payment.status,
+      },
+    });
+
     return res.status(201).json({ success: true, data: payment });
   } catch (error) {
     console.error("Error in createPayment:", error);
@@ -309,6 +317,8 @@ export const createPayment = async (req: AuthRequest, res: Response) => {
 export const updatePayment = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
+    const actorUserId = req.user?.id ?? null;
+
     if (!hotelId) {
       return res.status(401).json({ success: false, error: "Missing hotel context" });
     }
@@ -340,10 +350,7 @@ export const updatePayment = async (req: AuthRequest, res: Response) => {
     const nextAmount = parsed.data.amount ?? existing.amount;
     const nextStatus = (parsed.data.status ?? existing.status) as PaymentStatus;
 
-    /**
-     * 
-     * Here I include charges in the maximum payable amount for updates too.
-     */
+    // Here I include charges in the maximum payable amount for updates too.
     const chargesTotal = await getChargesTotalForBooking(existing.bookingId);
     const grandTotal = computeGrandTotal(existing.booking.totalPrice ?? 0, chargesTotal);
 
@@ -378,6 +385,29 @@ export const updatePayment = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // Here I audit payment updates.
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "PAYMENT_UPDATED",
+      entityType: "Payment",
+      entityId: updated.id,
+      metadata: {
+        bookingId: updated.bookingId,
+        before: {
+          amount: existing.amount,
+          method: existing.method,
+          status: existing.status,
+        },
+        after: {
+          amount: updated.amount,
+          method: updated.method,
+          status: updated.status,
+        },
+      },
+    });
+
     return res.status(200).json({ success: true, data: updated });
   } catch (error) {
     console.error("Error in updatePayment:", error);
@@ -389,6 +419,8 @@ export const updatePayment = async (req: AuthRequest, res: Response) => {
 export const deletePayment = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
+    const actorUserId = req.user?.id ?? null;
+
     if (!hotelId) {
       return res.status(401).json({ success: false, error: "Missing hotel context" });
     }
@@ -401,7 +433,7 @@ export const deletePayment = async (req: AuthRequest, res: Response) => {
     // Here I enforce tenant isolation: I only delete payments inside my hotel
     const existing = await prisma.payment.findFirst({
       where: { id, booking: { hotelId } },
-      select: { id: true },
+      select: { id: true, bookingId: true, amount: true, method: true, status: true },
     });
 
     if (!existing) {
@@ -409,6 +441,22 @@ export const deletePayment = async (req: AuthRequest, res: Response) => {
     }
 
     await prisma.payment.delete({ where: { id } });
+
+    // Here I audit payment deletion.
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "PAYMENT_DELETED",
+      entityType: "Payment",
+      entityId: existing.id,
+      metadata: {
+        bookingId: existing.bookingId,
+        amount: existing.amount,
+        method: existing.method,
+        status: existing.status,
+      },
+    });
 
     return res.status(200).json({ success: true, message: "Payment deleted successfully" });
   } catch (error) {

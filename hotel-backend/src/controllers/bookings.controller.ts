@@ -3,6 +3,7 @@ import prisma from "../services/prisma";
 import { z } from "zod";
 import { Prisma, BookingStatus, RoomStatus } from "@prisma/client";
 import type { AuthRequest } from "../middlewares/authMiddleware";
+import { auditLog } from "../services/audit.service";
 
 /**
  * Parse "YYYY-MM-DD" as UTC noon to avoid timezone shifting issues.
@@ -60,7 +61,6 @@ const moveRoomSchema = z.object({
   roomId: z.preprocess((v) => Number(v), z.number().int().positive()),
 });
 
-
 const updateStatusSchema = z.object({
   status: z.nativeEnum(BookingStatus),
 });
@@ -111,10 +111,7 @@ function getRoomStatusForBookingTransition(next: BookingStatus): RoomStatus | nu
  * Here I calculate how much was already paid for a booking (ONLY completed).
  * I support both "completed" and "Completed" to be robust.
  */
-async function getBookingPaidAmount(
-  tx: Prisma.TransactionClient,
-  bookingId: number
-): Promise<number> {
+async function getBookingPaidAmount(tx: Prisma.TransactionClient, bookingId: number): Promise<number> {
   const completed = await tx.payment.aggregate({
     where: {
       bookingId,
@@ -128,14 +125,8 @@ async function getBookingPaidAmount(
 
 /**
  * Here I calculate the total charges (consumption/extras) for a booking.
- * Charge.total is stored as int (UYU cents or UYU integer based on your design).
  */
-async function getBookingChargesTotal(
-  tx: Prisma.TransactionClient,
-  bookingId: number
-): Promise<number> {
-  // If you haven't added Charge model yet, this will fail at compile time.
-  // After prisma migrate + generate, it works.
+async function getBookingChargesTotal(tx: Prisma.TransactionClient, bookingId: number): Promise<number> {
   const agg = await tx.charge.aggregate({
     where: { bookingId },
     _sum: { total: true },
@@ -145,9 +136,7 @@ async function getBookingChargesTotal(
 }
 
 /**
- * Here I calculate how much is still due for a booking.
- * Professional rule:
- *   due = (totalPrice + chargesTotal) - paidCompleted
+ * due = (totalPrice + chargesTotal) - paidCompleted
  */
 async function getBookingDueAmount(
   tx: Prisma.TransactionClient,
@@ -179,7 +168,6 @@ const guestSelect = {
   createdAt: true,
   updatedAt: true,
 
-  // Optional extra fields (if you added them in schema)
   documentType: true,
   nationality: true,
   birthDate: true,
@@ -200,21 +188,10 @@ const userSelect = {
    CONTROLLERS (MULTI-HOTEL SAFE)
 ============================ */
 
-/**
- * GET /api/bookings
- * Here I scope everything by req.user.hotelId so hotels never see each other's bookings.
- *
- * PRO: I also return computed fields:
- * - paidCompleted
- * - chargesTotal
- * - dueAmount
- */
 export const getAllBookings = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const { status, roomId, guestId, from, to } = req.query;
 
@@ -242,7 +219,6 @@ export const getAllBookings = async (req: AuthRequest, res: Response) => {
       },
     });
 
-    // Here I compute paid/charges/due in bulk to keep the endpoint fast.
     const bookingIds = bookings.map((b) => b.id);
 
     const [paymentsGrouped, chargesGrouped] = await Promise.all([
@@ -272,12 +248,7 @@ export const getAllBookings = async (req: AuthRequest, res: Response) => {
       const chargesTotal = chargesMap.get(b.id) ?? 0;
       const dueAmount = Math.max(Number(b.totalPrice) + chargesTotal - paidCompleted, 0);
 
-      return {
-        ...b,
-        paidCompleted,
-        chargesTotal,
-        dueAmount,
-      };
+      return { ...b, paidCompleted, chargesTotal, dueAmount };
     });
 
     return res.status(200).json({ success: true, data: enriched });
@@ -287,17 +258,10 @@ export const getAllBookings = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/**
- * GET /api/bookings/:id
- * Here I enforce tenant isolation by querying with (id + hotelId).
- * PRO: I also return paid/charges/due.
- */
 export const getBookingById = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
@@ -332,16 +296,11 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/**
- * POST /api/bookings
- * Here I create a booking inside the authenticated user's hotel.
- */
 export const createBooking = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    const actorUserId = req.user?.id ?? null;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const parsed = createBookingSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -418,6 +377,25 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
       });
     });
 
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "BOOKING_CREATED",
+      entityType: "Booking",
+      entityId: booking.id,
+      metadata: {
+        bookingId: booking.id,
+        roomId: booking.roomId,
+        guestId: booking.guestId,
+        userId: booking.userId,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        totalPrice: booking.totalPrice,
+        status: booking.status,
+      },
+    });
+
     return res.status(201).json({ success: true, data: booking });
   } catch (error: any) {
     console.error("Error in createBooking:", error);
@@ -434,16 +412,11 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/**
- * PUT /api/bookings/:id
- * Here I only allow edits inside the same hotel.
- */
 export const updateBooking = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    const actorUserId = req.user?.id ?? null;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
@@ -541,6 +514,34 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
       });
     });
 
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "BOOKING_UPDATED",
+      entityType: "Booking",
+      entityId: updated.id,
+      metadata: {
+        bookingId: updated.id,
+        before: {
+          roomId: existing.roomId,
+          guestId: existing.guestId,
+          userId: existing.userId,
+          checkIn: existing.checkIn,
+          checkOut: existing.checkOut,
+          totalPrice: existing.totalPrice,
+        },
+        after: {
+          roomId: updated.roomId,
+          guestId: updated.guestId,
+          userId: updated.userId,
+          checkIn: updated.checkIn,
+          checkOut: updated.checkOut,
+          totalPrice: updated.totalPrice,
+        },
+      },
+    });
+
     return res.status(200).json({ success: true, data: updated });
   } catch (error: any) {
     console.error("Error in updateBooking:", error);
@@ -560,9 +561,8 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
 export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    const actorUserId = req.user?.id ?? null;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
@@ -579,8 +579,7 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
 
     const nextRoomId = parsed.data.roomId;
 
-    const updated = await prisma.$transaction(async (tx) => {
-      // Load booking inside tenant
+    const { updated, previous } = await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findFirst({
         where: { id, hotelId },
         include: {
@@ -596,7 +595,6 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
-      // V2: only allow moves for pending/confirmed
       if (!["pending", "confirmed"].includes(booking.status)) {
         const err: any = new Error("BOOKING_LOCKED");
         err.code = "BOOKING_LOCKED";
@@ -604,14 +602,12 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
-      // Prevent "move to same room"
       if (booking.roomId === nextRoomId) {
         const err: any = new Error("SAME_ROOM");
         err.code = "SAME_ROOM";
         throw err;
       }
 
-      // Validate target room in same hotel
       const nextRoom = await tx.room.findFirst({
         where: { id: nextRoomId, hotelId },
         include: { roomType: true },
@@ -635,7 +631,6 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
-      // Overlap check in target room (exclude current booking)
       const available = await ensureRoomAvailable(
         tx,
         hotelId,
@@ -651,17 +646,12 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
-      // Recalculate price based on target roomType
       const nights = calculateNights(booking.checkIn, booking.checkOut);
       const totalPrice = nights * (nextRoom.roomType?.basePrice ?? 0);
 
-      // Update booking roomId + price
       const bookingUpdated = await tx.booking.update({
         where: { id: booking.id },
-        data: {
-          roomId: nextRoomId,
-          totalPrice,
-        },
+        data: { roomId: nextRoomId, totalPrice },
         include: {
           room: { include: { roomType: true } },
           guest: { select: guestSelect },
@@ -669,7 +659,24 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
         },
       });
 
-      return bookingUpdated;
+      return { updated: bookingUpdated, previous: booking };
+    });
+
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "BOOKING_ROOM_MOVED",
+      entityType: "Booking",
+      entityId: updated.id,
+      metadata: {
+        bookingId: updated.id,
+        fromRoomId: previous.roomId,
+        toRoomId: updated.roomId,
+        fromTotalPrice: previous.totalPrice,
+        toTotalPrice: updated.totalPrice,
+        status: updated.status,
+      },
     });
 
     return res.status(200).json({ success: true, data: updated });
@@ -729,21 +736,11 @@ export const moveBookingRoom = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/**
- * PATCH /api/bookings/:id/status
- * Here I enforce tenant isolation, validate transitions, set timestamps,
- * block check-out when there is due amount (including CHARGES), and update room status safely.
- *
- * PRO:
- * - On check-in: I auto-create the police stay registration snapshot (if it doesn't exist)
- * - On check-out: I update the stay registration checkedOutAt
- */
 export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    const actorUserId = req.user?.id ?? null;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
@@ -755,8 +752,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
 
     const next = parsed.data.status;
 
-    const updated = await prisma.$transaction(async (tx) => {
-      // Here I load booking + room + guest so I can create stay registration snapshot when needed.
+    const { updated, previousStatus } = await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findFirst({
         where: { id, hotelId },
         include: {
@@ -786,18 +782,12 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
-      /**
-       * Here I require a guest for check-in because we want a professional flow:
-       * - police registration snapshot
-       * - real guest identity per stay
-       */
       if (next === "checked_in" && !booking.guestId) {
         const err: any = new Error("GUEST_REQUIRED_FOR_CHECKIN");
         err.code = "GUEST_REQUIRED_FOR_CHECKIN";
         throw err;
       }
 
-      // Here I block check-out when there is still money due (TOTAL + CHARGES - PAID).
       if (next === "checked_out") {
         const { due } = await getBookingDueAmount(tx, booking.id, booking.totalPrice);
         if (due > 0) {
@@ -808,25 +798,15 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      // Here I set operational timestamps only once.
-      const timestampPatch: Prisma.BookingUpdateInput = {};
       const now = new Date();
+      const timestampPatch: Prisma.BookingUpdateInput = {};
 
-      if (next === "checked_in" && !booking.checkedInAt) {
-        timestampPatch.checkedInAt = now;
-      }
+      if (next === "checked_in" && !booking.checkedInAt) timestampPatch.checkedInAt = now;
+      if (next === "checked_out" && !booking.checkedOutAt) timestampPatch.checkedOutAt = now;
 
-      if (next === "checked_out" && !booking.checkedOutAt) {
-        timestampPatch.checkedOutAt = now;
-      }
-
-      // Here I update booking status (+ timestamps).
       const bookingUpdated = await tx.booking.update({
         where: { id: booking.id },
-        data: {
-          status: next,
-          ...timestampPatch,
-        },
+        data: { status: next, ...timestampPatch },
         include: {
           room: { include: { roomType: true } },
           guest: { select: guestSelect },
@@ -834,10 +814,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         },
       });
 
-      /**
-       * Here I auto-create stay registration snapshot on check-in.
-       * I only create it if it doesn't exist (bookingId is unique).
-       */
       if (next === "checked_in") {
         const existingReg = await tx.stayRegistration.findUnique({
           where: { bookingId: bookingUpdated.id },
@@ -845,10 +821,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
 
         if (!existingReg) {
           const g = bookingUpdated.guest;
-
           if (!g) {
-            // This should not happen due to the guest required check above,
-            // but I keep it as a hard safety net.
             const err: any = new Error("GUEST_REQUIRED_FOR_CHECKIN");
             err.code = "GUEST_REQUIRED_FOR_CHECKIN";
             throw err;
@@ -862,7 +835,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
               guestId: bookingUpdated.guestId,
               createdById: req.user?.id ?? null,
 
-              // Snapshot fields (guest identity)
               guestName: g.name,
               guestEmail: g.email ?? null,
               guestPhone: g.phone ?? null,
@@ -876,7 +848,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
               city: (g as any).city ?? null,
               country: (g as any).country ?? null,
 
-              // Snapshot dates (scheduled + operational)
               scheduledCheckIn: bookingUpdated.checkIn,
               scheduledCheckOut: bookingUpdated.checkOut,
               checkedInAt: bookingUpdated.checkedInAt ?? null,
@@ -886,10 +857,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      /**
-       * Here I update stay registration on check-out (if it exists).
-       * This keeps the police record aligned with operational reality.
-       */
       if (next === "checked_out") {
         const reg = await tx.stayRegistration.findUnique({
           where: { bookingId: bookingUpdated.id },
@@ -898,17 +865,13 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         if (reg) {
           await tx.stayRegistration.update({
             where: { id: reg.id },
-            data: {
-              checkedOutAt: bookingUpdated.checkedOutAt ?? new Date(),
-            },
+            data: { checkedOutAt: bookingUpdated.checkedOutAt ?? new Date() },
           });
         }
       }
 
-      // Here I update the room status according to the booking transition.
       const roomStatus = getRoomStatusForBookingTransition(next);
       if (roomStatus && booking.roomId) {
-        // Here I avoid changing a maintenance room back to available.
         if (!(roomStatus === RoomStatus.disponible && booking.room?.status === RoomStatus.mantenimiento)) {
           await tx.room.update({
             where: { id: booking.roomId },
@@ -917,7 +880,23 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      return bookingUpdated;
+      return { updated: bookingUpdated, previousStatus: booking.status };
+    });
+
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "BOOKING_STATUS_CHANGED",
+      entityType: "Booking",
+      entityId: updated.id,
+      metadata: {
+        bookingId: updated.id,
+        from: previousStatus,
+        to: updated.status,
+        checkedInAt: updated.checkedInAt,
+        checkedOutAt: updated.checkedOutAt,
+      },
     });
 
     return res.status(200).json({ success: true, data: updated });
@@ -938,7 +917,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Here I return a clear error when check-in requires a guest.
     if (error?.code === "GUEST_REQUIRED_FOR_CHECKIN" || error?.message === "GUEST_REQUIRED_FOR_CHECKIN") {
       return res.status(400).json({
         success: false,
@@ -947,7 +925,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    //  Here I return a clear error when check-out is blocked due to pending balance (including charges).
     if (error?.code === "BOOKING_HAS_DUE" || error?.message === "BOOKING_HAS_DUE") {
       const due = error?.details?.due;
       return res.status(400).json({
@@ -962,30 +939,43 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/**
- * DELETE /api/bookings/:id
- * Here I only allow deletion inside the same hotel.
- */
 export const deleteBooking = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
-    if (!hotelId) {
-      return res.status(401).json({ success: false, error: "Missing hotel context" });
-    }
+    const actorUserId = req.user?.id ?? null;
+    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const id = Number(req.params.id);
     if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid booking ID" });
 
     const booking = await prisma.booking.findFirst({
       where: { id, hotelId },
-      select: { id: true },
+      select: {
+        id: true,
+        roomId: true,
+        guestId: true,
+        userId: true,
+        checkIn: true,
+        checkOut: true,
+        totalPrice: true,
+        status: true,
+      },
     });
 
-    if (!booking) {
-      return res.status(404).json({ success: false, error: "Booking not found" });
-    }
+    if (!booking) return res.status(404).json({ success: false, error: "Booking not found" });
 
     await prisma.booking.delete({ where: { id } });
+
+    await auditLog({
+      req,
+      hotelId,
+      actorUserId,
+      action: "BOOKING_DELETED",
+      entityType: "Booking",
+      entityId: booking.id,
+      metadata: booking,
+    });
+
     return res.status(200).json({ success: true, message: "Booking deleted successfully" });
   } catch (error: any) {
     console.error("Error in deleteBooking:", error);

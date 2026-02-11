@@ -3,6 +3,7 @@ import prisma from "../services/prisma";
 import { hashPassword, comparePassword } from "../utils/hash";
 import { generateToken } from "../utils/jwt";
 import { z } from "zod";
+import { auditLog } from "../services/audit.service";
 
 /**
  * Here I validate the public "create hotel + admin" payload.
@@ -61,7 +62,12 @@ const authController = {
         });
       }
 
-      const { hotelName, hotelCode, name, email, password } = parsed.data;
+      // Here I normalize values to avoid accidental duplicates (case/spacing)
+      const hotelName = parsed.data.hotelName.trim();
+      const hotelCode = parsed.data.hotelCode.trim().toLowerCase();
+      const name = parsed.data.name.trim();
+      const email = parsed.data.email.trim().toLowerCase();
+      const password = parsed.data.password;
 
       // Here I prevent duplicate hotel codes (tenant identifiers)
       const existingHotel = await prisma.hotel.findUnique({
@@ -100,7 +106,7 @@ const authController = {
           select: { id: true, name: true, email: true, role: true, hotelId: true },
         });
 
-        // ✅ IMPORTANT: create at least 1 room type per hotel
+        // Here I ensure every hotel starts with at least 1 room type.
         await tx.roomType.create({
           data: {
             hotelId: hotel.id,
@@ -111,6 +117,21 @@ const authController = {
         });
 
         return { hotel, user };
+      });
+
+      // Here I audit the creation of a new hotel tenant (high-value business event).
+      await auditLog({
+        req,
+        hotelId: created.hotel.id,
+        actorUserId: created.user.id,
+        action: "HOTEL_REGISTERED",
+        entityType: "Hotel",
+        entityId: created.hotel.id,
+        metadata: {
+          hotelCode: created.hotel.code,
+          hotelName: created.hotel.name,
+          adminEmail: created.user.email,
+        },
       });
 
       // Here I embed hotelId in the token so I can scope every request to the tenant
@@ -155,7 +176,7 @@ const authController = {
         });
       }
 
-      const admin = (req as any).user as { hotelId?: number };
+      const admin = (req as any).user as { hotelId?: number; id?: number };
       const hotelId = admin?.hotelId;
 
       if (!hotelId) {
@@ -165,7 +186,11 @@ const authController = {
         });
       }
 
-      const { name, email, password, role } = parsed.data;
+      // Here I normalize fields to keep data consistent
+      const name = parsed.data.name.trim();
+      const email = parsed.data.email.trim().toLowerCase();
+      const password = parsed.data.password;
+      const role = parsed.data.role;
 
       // Here I enforce unique email per hotel
       const existing = await prisma.user.findFirst({
@@ -192,6 +217,20 @@ const authController = {
           role: role ?? "receptionist",
         },
         select: { id: true, name: true, email: true, role: true, hotelId: true },
+      });
+
+      // Here I audit employee creation (important for accountability).
+      await auditLog({
+        req,
+        hotelId,
+        actorUserId: admin?.id ?? null,
+        action: "EMPLOYEE_CREATED",
+        entityType: "User",
+        entityId: user.id,
+        metadata: {
+          createdUserEmail: user.email,
+          createdUserRole: user.role,
+        },
       });
 
       return res.status(201).json({
@@ -227,7 +266,10 @@ const authController = {
         });
       }
 
-      const { hotelCode, email, password } = parsed.data;
+      // Here I normalize inputs to keep auth stable and predictable
+      const hotelCode = parsed.data.hotelCode.trim().toLowerCase();
+      const email = parsed.data.email.trim().toLowerCase();
+      const password = parsed.data.password;
 
       const hotel = await prisma.hotel.findUnique({
         where: { code: hotelCode },
@@ -235,6 +277,12 @@ const authController = {
       });
 
       if (!hotel) {
+        /**
+         * Important:
+         * I cannot write an AuditLog record because AuditLog requires a valid hotelId.
+         * If you want to audit "unknown hotelCode", we can add a separate table
+         * (e.g. SecurityEvent) that doesn't require hotelId.
+         */
         return res.status(401).json({
           success: false,
           code: "HOTEL_NOT_FOUND",
@@ -247,6 +295,20 @@ const authController = {
       });
 
       if (!user) {
+        // Here I audit a failed login attempt (hotel known, user not found).
+        await auditLog({
+          req,
+          hotelId: hotel.id,
+          actorUserId: null,
+          action: "AUTH_LOGIN_FAIL",
+          entityType: "User",
+          entityId: null,
+          metadata: {
+            email,
+            reason: "INVALID_CREDENTIALS", // I avoid revealing whether the email exists.
+          },
+        });
+
         return res.status(401).json({
           success: false,
           code: "INVALID_CREDENTIALS",
@@ -256,12 +318,37 @@ const authController = {
 
       const ok = await comparePassword(password, user.password);
       if (!ok) {
+        // Here I audit a failed login attempt (wrong password), without leaking specifics.
+        await auditLog({
+          req,
+          hotelId: hotel.id,
+          actorUserId: user.id,
+          action: "AUTH_LOGIN_FAIL",
+          entityType: "User",
+          entityId: user.id,
+          metadata: {
+            email,
+            reason: "INVALID_CREDENTIALS",
+          },
+        });
+
         return res.status(401).json({
           success: false,
           code: "INVALID_CREDENTIALS",
           error: "Invalid credentials",
         });
       }
+
+      // Here I audit a successful login.
+      await auditLog({
+        req,
+        hotelId: hotel.id,
+        actorUserId: user.id,
+        action: "AUTH_LOGIN_SUCCESS",
+        entityType: "User",
+        entityId: user.id,
+        metadata: { email },
+      });
 
       const token = generateToken({
         id: user.id,

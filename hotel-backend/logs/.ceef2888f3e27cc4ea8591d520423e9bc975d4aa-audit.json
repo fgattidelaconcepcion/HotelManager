@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "C:\\Users\\usuario\\Desktop\\HotelManager\\hotel-backend\\logs\\.ceef2888f3e27cc4ea8591d520423e9bc975d4aa-audit.json",
+    "files": [
+        {
+            "date": 1770844237062,
+            "name": "C:\\Users\\usuario\\Desktop\\HotelManager\\hotel-backend\\logs\\rejections-2026-02-11.log",
+            "hash": "e3ab146aa6c29a6f2ca8afaa5e20640d413c35f35b42cdbd258d3aa2178b2a18"
+        }
+    ],
+    "hashType": "sha256"
+}

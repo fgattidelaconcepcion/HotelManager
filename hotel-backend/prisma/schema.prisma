@@ -68,10 +68,13 @@ model Hotel {
   guests    Guest[]
   bookings  Booking[]
 
-  // New modules
+  // Modules
   charges           Charge[]
   stayRegistrations StayRegistration[]
   dailyCloses       DailyClose[]
+
+  // Audit (opposite relation)
+  auditLogs AuditLog[] @relation("HotelAuditLogs")
 }
 
 /**
@@ -90,6 +93,9 @@ model User {
 
   hotel    Hotel     @relation(fields: [hotelId], references: [id])
   bookings Booking[]
+
+  // Audit (opposite relation)
+  auditLogs AuditLog[] @relation("UserAuditLogs")
 
   // Opposite relations for auditing
   createdCharges           Charge[]
@@ -159,7 +165,7 @@ model Guest {
   // RIHP - Extra required fields
   maritalStatus String?
   occupation    String?
-  provenance    String? // residencia habitual / procedencia
+  provenance    String?
 
   // Existing
   documentNumber String? @map("documentnumber")
@@ -212,7 +218,7 @@ model Booking {
   guest    Guest?    @relation(fields: [guestId], references: [id])
   payments Payment[]
 
-  // New modules
+  // Modules
   charges          Charge[]
   stayRegistration StayRegistration?
 
@@ -241,7 +247,7 @@ model Payment {
 
 /**
  * ============================
- * CHARGE (CONSUMPTION / EXTRAS)
+ * CHARGE
  * ============================
  */
 model Charge {
@@ -272,7 +278,7 @@ model Charge {
 
 /**
  * ============================
- * STAY REGISTRATION (POLICE REPORT SNAPSHOT)
+ * STAY REGISTRATION
  * ============================
  */
 model StayRegistration {
@@ -329,28 +335,18 @@ model StayRegistration {
 
 /**
  * ============================
- * DAILY CLOSE (CASH CLOSING)
+ * DAILY CLOSE
  * ============================
- * Option A:
- * - A daily snapshot of COMPLETED payments for a given date (hotel-scoped).
- * - This creates an immutable record you can export later (CSV/PDF).
- * NOTE:
- * - We store dateKey as "YYYY-MM-DD" to avoid timezone shifting issues.
- * - Totals are integers (UYU) like Payment.amount.
  */
 model DailyClose {
   id      Int    @id @default(autoincrement())
   hotelId Int
   dateKey String // "YYYY-MM-DD"
 
-  // Core totals
   totalCompleted Int
-
-  // Helpful breakdown
   countCompleted Int
-  byMethod       Json? // { cash: 1200, card: 500, transfer: 0 } etc
+  byMethod       Json?
 
-  // Audit
   createdById Int?
   notes       String?
   createdAt   DateTime @default(now())
@@ -361,4 +357,34 @@ model DailyClose {
   @@unique([hotelId, dateKey], name: "hotelId_dateKey")
   @@index([hotelId, dateKey])
   @@index([createdById])
+}
+
+/**
+ * ============================
+ * AUDIT LOG
+ * ============================
+ */
+model AuditLog {
+  id          Int  @id @default(autoincrement())
+  hotelId     Int
+  actorUserId Int?
+
+  action     String
+  entityType String?
+  entityId   Int?
+  metadata   Json?
+
+  ip        String?
+  userAgent String?
+  requestId String?
+
+  createdAt DateTime @default(now())
+
+  hotel Hotel @relation("HotelAuditLogs", fields: [hotelId], references: [id])
+  actor User? @relation("UserAuditLogs", fields: [actorUserId], references: [id])
+
+  @@index([hotelId, createdAt])
+  @@index([hotelId, action])
+  @@index([entityType, entityId])
+  @@index([actorUserId])
 }
