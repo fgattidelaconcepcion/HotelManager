@@ -17,18 +17,36 @@ import type { AuthRequest } from "../middlewares/authMiddleware";
  */
 const createRoomSchema = z.object({
   number: z.string().min(1, "Room number is required"),
+
+  /**
+   * Here I coerce floor to a number and validate it's a non-negative integer.
+   */
   floor: z.preprocess((v) => Number(v), z.number().int().nonnegative()),
 
   /**
    * IMPORTANT:
    * Here I treat ""/null/undefined as "missing" instead of converting to 0.
    * This avoids the classic Number("") === 0 validation bug.
+   *
+   * NOTE ABOUT ZOD v4:
+   * - Zod v4 removed the `{ required_error: ... }` option (v3 style).
+   * - So I enforce "required" by ensuring the value is a positive integer.
    */
   roomTypeId: z.preprocess(
     (v) => (v === "" || v === null || v === undefined ? undefined : Number(v)),
-    z.number({ required_error: "Room type is required" }).int().positive("Room type is required")
+    z
+      .number({
+        invalid_type_error: "Room type is required",
+      })
+      .int("Room type is required")
+      .positive("Room type is required")
   ),
 
+  /**
+   * Here I validate the status against the Prisma enum.
+   * - If the incoming value is empty, I treat it as missing.
+   * - Default is "disponible".
+   */
   status: z
     .preprocess(
       (v) => (v === undefined || v === null || v === "" ? undefined : v),
@@ -80,7 +98,9 @@ export const getAllRooms = async (req: AuthRequest, res: Response) => {
       if ((Object.values(RoomStatus) as string[]).includes(status)) {
         where.status = status as RoomStatus;
       } else {
-        return res.status(400).json({ success: false, code: "INVALID_STATUS", error: "Invalid status" });
+        return res
+          .status(400)
+          .json({ success: false, code: "INVALID_STATUS", error: "Invalid status" });
       }
     }
 
@@ -136,7 +156,7 @@ export const createRoom = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // ✅ MULTI-TENANT SAFETY: roomType must belong to this hotel
+    //  MULTI-TENANT SAFETY: roomType must belong to this hotel
     const roomType = await prisma.roomType.findFirst({
       where: { id: parsed.data.roomTypeId, hotelId },
       select: { id: true },
@@ -229,7 +249,7 @@ export const updateRoom = async (req: AuthRequest, res: Response) => {
 
     if (!existingRoom) return res.status(404).json({ success: false, error: "Room not found" });
 
-    // ✅ If roomTypeId is being changed, validate it belongs to this hotel
+    // If roomTypeId is being changed, validate it belongs to this hotel
     if (parsed.data.roomTypeId) {
       const roomType = await prisma.roomType.findFirst({
         where: { id: parsed.data.roomTypeId, hotelId },
