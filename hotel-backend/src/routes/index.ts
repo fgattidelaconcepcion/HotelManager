@@ -129,10 +129,6 @@ router.use("/reports", reportsRoutes);
  */
 router.use("/hotel", hotelRoutes);
 
-/**
- * Reports (RIHP exports)
- */
-router.use("/reports", reportsRoutes);
 
 /**
  * New modules

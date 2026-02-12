@@ -88,31 +88,25 @@ const allowedOrigins = [
 
 const corsOptions: CorsOptions = {
   origin: (origin, cb) => {
-    // Allow server-to-server / curl / Postman (no origin header)
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // Postman/curl
 
-    /**
-     * In development we can be flexible because local tooling sometimes uses
-     * different ports/origins. However, we still keep a controlled list.
-     */
-    if (env.NODE_ENV !== "production") {
-      // If you want to allow ANY origin in dev, you can return cb(null, true) here.
-      // I prefer keeping it explicit to avoid surprises.
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked (dev) for origin: ${origin}`));
-    }
-
-    /**
-     * In production we are strict: only the deployed frontend domain is allowed.
-     */
     if (allowedOrigins.includes(origin)) return cb(null, true);
 
-    return cb(new Error(`CORS blocked (prod) for origin: ${origin}`));
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
   },
-  credentials: true,
+
+  // IMPORTANTE: como usás Authorization Bearer, NO necesitás cookies
+  credentials: false,
+
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 };
 
 app.use(cors(corsOptions));
+
+//  PRE-FLIGHT: responder a todos los OPTIONS antes de rateLimit y rutas
+app.options("*", cors(corsOptions));
+
 
 /* =========================
    Body parsing
