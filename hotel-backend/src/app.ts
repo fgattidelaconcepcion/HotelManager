@@ -54,8 +54,9 @@ app.use((req, res, next) => {
  *
  * Express 5 note:
  * - Do NOT use `app.options("*", ...)` because path-to-regexp can crash.
- * - Use a RegExp route: `app.options(/.*/, ...)
+  * - Use a RegExp route: `app.options(/.*/, ...)`
  */
+
 
 const devOrigins = ["http://localhost:5173", "http://localhost:3000"];
 
