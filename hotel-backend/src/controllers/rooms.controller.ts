@@ -28,19 +28,16 @@ const createRoomSchema = z.object({
    * Here I treat ""/null/undefined as "missing" instead of converting to 0.
    * This avoids the classic Number("") === 0 validation bug.
    *
-   * NOTE ABOUT ZOD v4:
-   * - Zod v4 removed the `{ required_error: ... }` option (v3 style).
-   * - So I enforce "required" by ensuring the value is a positive integer.
+   * NOTE ABOUT COMPATIBILITY:
+   * - I avoid passing Zod options like { invalid_type_error } because TS typings
+   *   can differ across Zod versions/bundles.
+   * - Instead, I enforce "required" using refine + integer/positive checks.
    */
-  roomTypeId: z.preprocess(
-    (v) => (v === "" || v === null || v === undefined ? undefined : Number(v)),
-    z
-      .number({
-        invalid_type_error: "Room type is required",
-      })
-      .int("Room type is required")
-      .positive("Room type is required")
-  ),
+  roomTypeId: z
+    .preprocess((v) => (v === "" || v === null || v === undefined ? undefined : Number(v)), z.any())
+    .refine((v) => typeof v === "number" && Number.isFinite(v), { message: "Room type is required" })
+    .transform((v) => v as number)
+    .refine((v) => Number.isInteger(v) && v > 0, { message: "Room type is required" }),
 
   /**
    * Here I validate the status against the Prisma enum.
@@ -156,7 +153,7 @@ export const createRoom = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    //  MULTI-TENANT SAFETY: roomType must belong to this hotel
+    // MULTI-TENANT SAFETY: roomType must belong to this hotel
     const roomType = await prisma.roomType.findFirst({
       where: { id: parsed.data.roomTypeId, hotelId },
       select: { id: true },
@@ -249,7 +246,7 @@ export const updateRoom = async (req: AuthRequest, res: Response) => {
 
     if (!existingRoom) return res.status(404).json({ success: false, error: "Room not found" });
 
-    // If roomTypeId is being changed, validate it belongs to this hotel
+    //  If roomTypeId is being changed, validate it belongs to this hotel
     if (parsed.data.roomTypeId) {
       const roomType = await prisma.roomType.findFirst({
         where: { id: parsed.data.roomTypeId, hotelId },
