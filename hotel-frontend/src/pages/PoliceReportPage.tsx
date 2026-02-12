@@ -6,19 +6,15 @@ import { Button } from "../components/ui/Button";
 import RoleGate from "../auth/RoleGate";
 
 /**
- * Police report page
+ * Police report page (RIHP - Uruguay)
  *
  * Here I export StayRegistration rows for police reporting:
- * - CSV (existing)
+ * - CSV
  * - PDF (printable)
  *
- * Backend endpoints (admin-only):
+ * Backend endpoints:
  * - GET /api/reports/police?from=YYYY-MM-DD&to=YYYY-MM-DD
  * - GET /api/reports/police/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD
- *
- * NOTE:
- * I download using the authenticated axios instance (api),
- * so the JWT is included and the export works even if the route is protected.
  */
 
 function buildParams(from: string, to: string) {
@@ -43,11 +39,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 function mapApiError(err: any) {
-  return (
-    err?.response?.data?.error ||
-    err?.message ||
-    "Something went wrong. Please try again."
-  );
+  return err?.response?.data?.error || err?.message || "Something went wrong. Please try again.";
 }
 
 export default function PoliceReportPage() {
@@ -71,17 +63,15 @@ export default function PoliceReportPage() {
       setLoadingCsv(true);
       setError(null);
 
-      /**
-       * Here I download CSV as a Blob, because:
-       * - I need the Authorization header (JWT)
-       * - and I want a direct download file
-       */
-      const res = await api.get("/reports/police", {
-        params,
-        responseType: "blob",
-      } as any);
+      const res = await api.get(
+        "/reports/police",
+        {
+          params,
+          responseType: "blob",
+        } as any
+      );
 
-      downloadBlob(res.data, "police-report.csv");
+      downloadBlob(res.data, "police-report-rihp.csv");
     } catch (err: any) {
       console.error("Error downloading CSV police report", err);
       setError(mapApiError(err));
@@ -95,16 +85,15 @@ export default function PoliceReportPage() {
       setLoadingPdf(true);
       setError(null);
 
-      /**
-       * Here I download PDF as a Blob so the browser saves it,
-       * and then the user can open/print it.
-       */
-      const res = await api.get("/reports/police/pdf", {
-        params,
-        responseType: "blob",
-      } as any);
+      const res = await api.get(
+        "/reports/police/pdf",
+        {
+          params,
+          responseType: "blob",
+        } as any
+      );
 
-      downloadBlob(res.data, "police-report.pdf");
+      downloadBlob(res.data, "police-report-rihp.pdf");
     } catch (err: any) {
       console.error("Error downloading PDF police report", err);
       setError(mapApiError(err));
@@ -115,32 +104,37 @@ export default function PoliceReportPage() {
 
   return (
     <div className="space-y-6">
-     <p className="text-xs text-slate-500 mt-3">
-  This export includes only the required RIHP fields:
-  full name, document number, nationality, birth date, accommodation code,
-  and stay dates (entry/exit).
-</p>
+      <PageHeader
+        title="Police report (RIHP)"
+        description="Export guest stay registrations required for Uruguay RIHP reporting."
+      />
+
+      <Card>
+        <CardBody>
+          <p className="text-xs text-slate-600">
+            This export includes the RIHP fields: full name, document (type/number), nationality,
+            birth date, civil status, occupation, provenance, entry/exit dates, room number, and
+            establishment details (address, responsible name, registration number).
+          </p>
+        </CardBody>
+      </Card>
 
       {error && (
         <Card>
           <CardBody>
-            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
-              {error}
-            </div>
+            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">{error}</div>
           </CardBody>
         </Card>
       )}
 
-      {/* Admin-only exports (because the backend is admin-only too) */}
+      {/* Exports are sensitive: admin + receptionist can access if you want. */}
       <RoleGate allowed={["admin", "receptionist"]}>
         <Card>
           <CardBody>
             <div className="max-w-4xl">
               <div className="grid gap-4 md:grid-cols-4 items-end">
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700">
-                    From
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700">From</label>
                   <input
                     type="date"
                     value={from}
@@ -150,9 +144,7 @@ export default function PoliceReportPage() {
                 </div>
 
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-medium text-slate-700">
-                    To
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700">To</label>
                   <input
                     type="date"
                     value={to}
@@ -191,10 +183,9 @@ export default function PoliceReportPage() {
               </div>
 
               <p className="text-xs text-slate-500 mt-3">
-                This file is generated from stay registrations (snapshots) created on{" "}
-                <span className="font-semibold">Check-in</span>. If you don’t see
-                rows, make sure you have check-ins that created the stay
-                registration snapshot.
+                Rows are generated from stay registration snapshots created on{" "}
+                <span className="font-semibold">Check-in</span>. If you don’t see rows, make sure
+                check-ins were completed.
               </p>
             </div>
           </CardBody>

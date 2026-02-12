@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import api from "../api/api";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card, CardBody } from "../components/ui/Card";
@@ -53,7 +53,6 @@ export default function HotelSettingsPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -92,9 +91,7 @@ export default function HotelSettingsPage() {
       {error && (
         <Card>
           <CardBody>
-            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
-              {error}
-            </div>
+            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">{error}</div>
           </CardBody>
         </Card>
       )}
@@ -110,9 +107,7 @@ export default function HotelSettingsPage() {
               {/* Read-only identity */}
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Hotel name
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700">Hotel name</label>
                   <input
                     value={hotel.name}
                     disabled
@@ -135,9 +130,7 @@ export default function HotelSettingsPage() {
               {/* Editable fields */}
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700">
-                    Address
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700">Address</label>
                   <input
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
@@ -174,12 +167,7 @@ export default function HotelSettingsPage() {
               {/* Save (admin only) */}
               <RoleGate allowed={["admin"]}>
                 <div className="flex gap-2 justify-end">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => load()}
-                    disabled={saving}
-                  >
+                  <Button type="button" variant="secondary" onClick={() => load()} disabled={saving}>
                     Refresh
                   </Button>
 
