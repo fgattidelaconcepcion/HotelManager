@@ -1,19 +1,16 @@
 [build]
   base = "hotel-frontend"
-  command = "npm run build"
+  command = "npm run build:netlify"
   publish = "dist"
 
 [build.environment]
-  # Lo seteás también en la UI de Netlify, esto solo documenta/asegura el nombre.
-  VITE_API_URL = ""
+  VITE_API_URL = "https://hotelmanager-production-db1f.up.railway.app/api"
 
-# SPA routing (React Router)
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-# Seguridad básica (opcional)
 [[headers]]
   for = "/*"
   [headers.values]
