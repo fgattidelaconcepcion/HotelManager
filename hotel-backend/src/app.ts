@@ -55,7 +55,8 @@ app.use((req, res, next) => {
  * Express 5 note:
  * - Do NOT use `app.options("*", ...)` because path-to-regexp can crash.
  * - Use a RegExp route: `app.options(/.*/, ...)
- 
+ */
+
 const devOrigins = ["http://localhost:5173", "http://localhost:3000"];
 
 const allowedOrigins = [
@@ -65,13 +66,11 @@ const allowedOrigins = [
 
 const corsOptions: CorsOptions = {
   origin: (origin, cb) => {
-    // Allow non-browser requests (curl/Postman) that have no Origin header
     if (!origin) return cb(null, true);
 
     const isAllowed = allowedOrigins.includes(origin);
 
     if (!isAllowed) {
-      // Don't throw here; just reject.
       logger.warn("CORS blocked origin", { origin, allowedOrigins });
       return cb(null, false);
     }
@@ -79,17 +78,12 @@ const corsOptions: CorsOptions = {
     return cb(null, true);
   },
 
-  // This API uses Authorization: Bearer <token>, so cookies are not required.
   credentials: false,
-
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// Enable CORS early so preflights are handled before routes and rate limits
 app.use(cors(corsOptions));
-
-// Preflight handler (Express 5 compatible)
 app.options(/.*/, cors(corsOptions));
 
 /* =========================
@@ -120,7 +114,6 @@ const apiLimiter = rateLimit({
   },
 });
 
-// Apply limiter only to API routes, not /health
 app.use("/api", apiLimiter);
 
 /* =========================
