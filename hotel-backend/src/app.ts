@@ -105,7 +105,8 @@ const corsOptions: CorsOptions = {
 app.use(cors(corsOptions));
 
 //  PRE-FLIGHT: responder a todos los OPTIONS antes de rateLimit y rutas
-app.options("*", cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
+
 
 
 /* =========================
