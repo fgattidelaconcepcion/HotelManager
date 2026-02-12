@@ -2,12 +2,13 @@ import "dotenv/config";
 import { z } from "zod";
 
 /**
- * Here I validate and normalize environment variables in ONE place.
- * My goal: fail fast with a clear error when something is misconfigured.
+ * Validate and normalize environment variables in one place.
+ * Goal: fail fast with a clear error when something is misconfigured.
  *
- * NOTE:
+ * Production notes:
+ * - FRONTEND_URL must be the exact deployed origin (no trailing slash),
+ *   e.g. https://hotelsmanagment.netlify.app
  * - Railway injects PORT automatically.
- * - In production we should bind to 0.0.0.0 (or omit HOST in listen).
  */
 
 const nodeEnv = process.env.NODE_ENV ?? "development";
@@ -15,13 +16,15 @@ const nodeEnv = process.env.NODE_ENV ?? "development";
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
-  // Database
+  // Database connection (supports SQLite in dev and Postgres in prod)
   DATABASE_URL: z
     .string()
     .min(1, "DATABASE_URL is required")
-    // Accept sqlite file url in dev (file:./dev.db) and allow postgres urls in production
     .refine(
-      (v) => v.startsWith("file:") || v.startsWith("postgresql://") || v.startsWith("postgres://"),
+      (v) =>
+        v.startsWith("file:") ||
+        v.startsWith("postgresql://") ||
+        v.startsWith("postgres://"),
       'DATABASE_URL must start with "file:", "postgresql://" or "postgres://"'
     ),
 
@@ -30,9 +33,8 @@ const EnvSchema = z.object({
 
   /**
    * HOST:
-   * - In production platforms (Railway/Render) we must listen on 0.0.0.0
-   *   so the service is reachable from outside the container.
-   * - In local dev, localhost is also OK, but 0.0.0.0 works fine as well.
+   * - In production you typically bind to 0.0.0.0 (or omit HOST in listen()).
+   * - Your server.ts already avoids passing HOST in production, which is correct.
    */
   HOST: z.string().default("0.0.0.0"),
 
@@ -41,13 +43,15 @@ const EnvSchema = z.object({
 
   /**
    * Frontend URL:
-   * - Optional in development.
-   * - REQUIRED in production because we want strict CORS.
+   * - Optional in development
+   * - Required in production (strict CORS)
    */
   FRONTEND_URL: z.string().url().optional(),
 
   // Logging
-  LOG_LEVEL: z.enum(["error", "warn", "info", "http", "verbose", "debug", "silly"]).optional(),
+  LOG_LEVEL: z
+    .enum(["error", "warn", "info", "http", "verbose", "debug", "silly"])
+    .optional(),
   LOG_DIR: z.string().optional(),
 });
 
@@ -63,8 +67,6 @@ const parsed = EnvSchema.safeParse({
 });
 
 if (!parsed.success) {
-  // Here I print a readable list of env issues and crash early
-  // so I never run the server in a broken configuration.
   console.error("❌ Invalid environment variables:");
   console.error(parsed.error.flatten().fieldErrors);
   process.exit(1);
@@ -73,19 +75,18 @@ if (!parsed.success) {
 export const env = parsed.data;
 
 /**
- * Here I enforce stricter rules in production.
+ * Extra production rules (fail closed).
  */
 if (env.NODE_ENV === "production") {
-  // I strongly recommend never allowing a short secret in prod.
+  // Prevent deploying with an obviously weak dev secret
   if (env.JWT_SECRET.includes("dev_secret")) {
-    console.error("❌ JWT_SECRET looks like a dev secret. Set a strong secret in production.");
+    console.error(
+      "❌ JWT_SECRET looks like a dev secret. Set a strong secret in production."
+    );
     process.exit(1);
   }
 
-  /**
-   * Fail closed: in production I require FRONTEND_URL to be present,
-   * otherwise CORS cannot be configured safely.
-   */
+  // Strict CORS requires this value
   if (!env.FRONTEND_URL) {
     console.error("❌ FRONTEND_URL is required in production for strict CORS.");
     process.exit(1);

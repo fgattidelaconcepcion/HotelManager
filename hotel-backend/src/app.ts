@@ -1,7 +1,5 @@
 import express, { NextFunction, Request, Response } from "express";
 import cors, { CorsOptions } from "cors";
-
-// Hardening middlewares
 import helmet from "helmet";
 import compression from "compression";
 import cookieParser from "cookie-parser";
@@ -10,7 +8,6 @@ import crypto from "crypto";
 
 import { httpLogger } from "./middlewares/httpLogger";
 import { logger } from "./services/logger";
-
 import mainRouter from "./routes/index";
 import dashboardRoutes from "./routes/dashboard.routes";
 import { env } from "./config/env";
@@ -21,43 +18,23 @@ const app = express();
    Core settings
 ========================= */
 
-/**
- * Here I enable "trust proxy" because in production I may sit behind a proxy
- * (Railway/Render/NGINX). This is important for correct IP detection and secure cookies.
- */
 app.set("trust proxy", 1);
 
 /* =========================
    Security / hardening
 ========================= */
 
-/**
- * Here I apply secure HTTP headers.
- * - It's a safe baseline hardening for production.
- * - I keep it enabled in dev too (it usually doesn't break APIs).
- */
 app.use(
   helmet({
-    // If later you add a frontend served from the same domain and need CSP,
-    // we can configure it explicitly. For an API, the default is fine.
     contentSecurityPolicy: false,
   })
 );
 
-/**
- * Here I compress responses to improve performance (especially JSON payloads).
- */
 app.use(compression());
-
-/**
- * Here I parse cookies.
- * Even if I don't use cookies yet, I will need it for refresh tokens later.
- */
 app.use(cookieParser());
 
 /**
- * Here I attach a request id to every request so logs are traceable.
- * This helps a lot in real operation when users report issues.
+ * Add a request id so logs and user-reported errors can be correlated.
  */
 app.use((req, res, next) => {
   const id = req.header("x-request-id") || crypto.randomUUID();
@@ -71,14 +48,14 @@ app.use((req, res, next) => {
 ========================= */
 
 /**
- * Here I define allowed origins for browsers.
- * - In development I allow local dev origins.
- * - In production I allow ONLY env.FRONTEND_URL (strict).
+ * Important:
+ * - If you throw inside the CORS origin callback (cb(new Error)),
+ *   browsers may show a CORS error because headers won't be set.
  *
- * IMPORTANT:
- * - env.ts already enforces FRONTEND_URL to exist in production,
- *   so by the time we reach this file we can safely configure CORS.
- */
+ * Express 5 note:
+ * - Do NOT use `app.options("*", ...)` because path-to-regexp can crash.
+ * - Use a RegExp route: `app.options(/.*/, ...)
+ 
 const devOrigins = ["http://localhost:5173", "http://localhost:3000"];
 
 const allowedOrigins = [
@@ -88,57 +65,52 @@ const allowedOrigins = [
 
 const corsOptions: CorsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // Postman/curl
+    // Allow non-browser requests (curl/Postman) that have no Origin header
+    if (!origin) return cb(null, true);
 
-    if (allowedOrigins.includes(origin)) return cb(null, true);
+    const isAllowed = allowedOrigins.includes(origin);
 
-    return cb(new Error(`CORS blocked for origin: ${origin}`));
+    if (!isAllowed) {
+      // Don't throw here; just reject.
+      logger.warn("CORS blocked origin", { origin, allowedOrigins });
+      return cb(null, false);
+    }
+
+    return cb(null, true);
   },
 
-  // IMPORTANTE: como usás Authorization Bearer, NO necesitás cookies
+  // This API uses Authorization: Bearer <token>, so cookies are not required.
   credentials: false,
 
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
+// Enable CORS early so preflights are handled before routes and rate limits
 app.use(cors(corsOptions));
 
-//  PRE-FLIGHT: responder a todos los OPTIONS antes de rateLimit y rutas
+// Preflight handler (Express 5 compatible)
 app.options(/.*/, cors(corsOptions));
-
-
 
 /* =========================
    Body parsing
 ========================= */
 
-/**
- * Here I parse JSON bodies with a sane limit.
- */
 app.use(express.json({ limit: "10mb" }));
 
 /* =========================
-   Logging (HTTP)
+   Logging
 ========================= */
 
-/**
- * Here I log every request with requestId (rid).
- */
 app.use(httpLogger);
 
 /* =========================
    Global API rate limit
 ========================= */
 
-/**
- * Here I add a global API rate limiter.
- * This is not the brute-force limiter (that one is auth-specific).
- * This protects the API from accidental abuse and simple DoS.
- */
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 600, // 600 requests / 15 min / IP
+  windowMs: 15 * 60 * 1000,
+  limit: 600,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -148,7 +120,7 @@ const apiLimiter = rateLimit({
   },
 });
 
-// Here I apply the limiter only to API routes, not to /health.
+// Apply limiter only to API routes, not /health
 app.use("/api", apiLimiter);
 
 /* =========================
@@ -167,14 +139,11 @@ app.get("/health", (_req, res) => {
    Routes
 ========================= */
 
-// Here I mount dashboard routes first.
 app.use("/api/dashboard", dashboardRoutes);
-
-// Here I mount the rest of the API routes.
 app.use("/api", mainRouter);
 
 /* =========================
-   404 handler
+   404
 ========================= */
 
 app.use((req, res) => {
@@ -197,18 +166,13 @@ type AppError = Error & {
 };
 
 app.use((err: AppError, req: Request, res: Response, _next: NextFunction) => {
-  // If headers already sent, Express default handler will finish it
   if (res.headersSent) return;
 
-  const status = err.statusCode && Number.isInteger(err.statusCode) ? err.statusCode : 500;
+  const status =
+    err.statusCode && Number.isInteger(err.statusCode) ? err.statusCode : 500;
 
   const isProd = env.NODE_ENV === "production";
 
-  /**
-   * Here I log the request id so I can trace this exact failure in logs.
-   * In production I still log the real error message + stack to the server logs,
-   * but I return a generic message to clients for 500 errors.
-   */
   logger.error("Unhandled error", {
     requestId: (req as any).requestId,
     message: err.message,
@@ -221,8 +185,10 @@ app.use((err: AppError, req: Request, res: Response, _next: NextFunction) => {
   return res.status(status).json({
     success: false,
     code: err.code ?? (status === 500 ? "INTERNAL_ERROR" : "ERROR"),
-    // In prod avoid leaking internal messages
-    error: isProd && status === 500 ? "Internal server error" : err.message || "Internal server error",
+    error:
+      isProd && status === 500
+        ? "Internal server error"
+        : err.message || "Internal server error",
     requestId: (req as any).requestId,
   });
 });
