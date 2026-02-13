@@ -3,10 +3,6 @@
   command = "npm run build:netlify"
   publish = "dist"
 
-[build.environment]
-  [build.environment]
-  VITE_API_URL = "https://hotelmanager-production-abf9.up.railway.app/api"
-
 [[redirects]]
   from = "/*"
   to = "/index.html"
