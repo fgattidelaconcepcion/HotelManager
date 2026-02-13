@@ -152,7 +152,6 @@ api.interceptors.response.use(
   }
 );
 
-console.log("BUILD API URL:", import.meta.env.VITE_API_URL);
 
 
 export default api;

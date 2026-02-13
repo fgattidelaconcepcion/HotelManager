@@ -4,7 +4,7 @@
   publish = "dist"
 
 [build.environment]
-  VITE_API_URL = "https://hotelmanager-production-db1f.up.railway.app/api"
+  VITE_API_URL = "hotelmanager-production-abf9.up.railway.app"
 
 [[redirects]]
   from = "/*"
