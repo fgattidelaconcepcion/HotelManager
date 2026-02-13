@@ -61,16 +61,17 @@ const corsOptions: CorsOptions = {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
 
-    const isAllowed = allowedOrigins.includes(origin);
+    const allowed =
+      origin === env.FRONTEND_URL ||
+      origin.endsWith(".netlify.app") ||
+      devOrigins.includes(origin);
 
-    if (!isAllowed) {
-      logger.warn("CORS blocked origin", { origin, allowedOrigins });
-      return cb(null, false);
+    if (!allowed) {
+      return cb(new Error(`CORS blocked origin: ${origin}`));
     }
 
     return cb(null, true);
   },
-
   credentials: false,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
