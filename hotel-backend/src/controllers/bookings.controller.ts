@@ -740,24 +740,46 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
   try {
     const hotelId = req.user?.hotelId;
     const actorUserId = req.user?.id ?? null;
-    if (!hotelId) return res.status(401).json({ success: false, error: "Missing hotel context" });
+
+    if (!hotelId)
+      return res.status(401).json({ success: false, error: "Missing hotel context" });
 
     const id = Number(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ success: false, error: "Invalid ID" });
+    if (isNaN(id))
+      return res.status(400).json({ success: false, error: "Invalid ID" });
 
     const parsed = updateStatusSchema.safeParse(req.body);
-    if (!parsed.success) {
+    if (!parsed.success)
       return res.status(400).json({ success: false, code: "INVALID_STATUS", error: "Invalid status" });
-    }
 
     const next = parsed.data.status;
 
     const { updated, previousStatus } = await prisma.$transaction(async (tx) => {
+
+      // I load booking with full guest info including RIHP extra fields
       const booking = await tx.booking.findFirst({
         where: { id, hotelId },
         include: {
           room: true,
-          guest: { select: guestSelect },
+          guest: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              documentType: true,
+              documentNumber: true,
+              nationality: true,
+              birthDate: true,
+              gender: true,
+              address: true,
+              city: true,
+              country: true,
+              maritalStatus: true,
+              occupation: true,
+              provenance: true,
+            },
+          },
         },
       });
 
@@ -778,7 +800,6 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
       if (!transitions[booking.status].includes(next)) {
         const err: any = new Error("INVALID_TRANSITION");
         err.code = "INVALID_TRANSITION";
-        err.details = { current: booking.status, next };
         throw err;
       }
 
@@ -788,30 +809,18 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         throw err;
       }
 
-      if (next === "checked_out") {
-        const { due } = await getBookingDueAmount(tx, booking.id, booking.totalPrice);
-        if (due > 0) {
-          const err: any = new Error("BOOKING_HAS_DUE");
-          err.code = "BOOKING_HAS_DUE";
-          err.details = { due };
-          throw err;
-        }
-      }
-
       const now = new Date();
       const timestampPatch: Prisma.BookingUpdateInput = {};
 
-      if (next === "checked_in" && !booking.checkedInAt) timestampPatch.checkedInAt = now;
-      if (next === "checked_out" && !booking.checkedOutAt) timestampPatch.checkedOutAt = now;
+      if (next === "checked_in" && !booking.checkedInAt)
+        timestampPatch.checkedInAt = now;
+
+      if (next === "checked_out" && !booking.checkedOutAt)
+        timestampPatch.checkedOutAt = now;
 
       const bookingUpdated = await tx.booking.update({
         where: { id: booking.id },
         data: { status: next, ...timestampPatch },
-        include: {
-          room: { include: { roomType: true } },
-          guest: { select: guestSelect },
-          user: { select: userSelect },
-        },
       });
 
       if (next === "checked_in") {
@@ -820,12 +829,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         });
 
         if (!existingReg) {
-          const g = bookingUpdated.guest;
-          if (!g) {
-            const err: any = new Error("GUEST_REQUIRED_FOR_CHECKIN");
-            err.code = "GUEST_REQUIRED_FOR_CHECKIN";
-            throw err;
-          }
+          const g = booking.guest!;
 
           await tx.stayRegistration.create({
             data: {
@@ -833,49 +837,32 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
               bookingId: bookingUpdated.id,
               roomId: bookingUpdated.roomId,
               guestId: bookingUpdated.guestId,
-              createdById: req.user?.id ?? null,
+              createdById: actorUserId,
 
               guestName: g.name,
               guestEmail: g.email ?? null,
               guestPhone: g.phone ?? null,
 
-              documentType: (g as any).documentType ?? null,
+              documentType: g.documentType ?? null,
               documentNumber: g.documentNumber ?? null,
-              nationality: (g as any).nationality ?? null,
-              birthDate: (g as any).birthDate ?? null,
-              gender: (g as any).gender ?? null,
+              nationality: g.nationality ?? null,
+              birthDate: g.birthDate ?? null,
+              gender: g.gender ?? null,
+
               address: g.address ?? null,
-              city: (g as any).city ?? null,
-              country: (g as any).country ?? null,
+              city: g.city ?? null,
+              country: g.country ?? null,
+
+      
+              maritalStatus: g.maritalStatus ?? null,
+              occupation: g.occupation ?? null,
+              provenance: g.provenance ?? null,
 
               scheduledCheckIn: bookingUpdated.checkIn,
               scheduledCheckOut: bookingUpdated.checkOut,
               checkedInAt: bookingUpdated.checkedInAt ?? null,
               checkedOutAt: bookingUpdated.checkedOutAt ?? null,
             },
-          });
-        }
-      }
-
-      if (next === "checked_out") {
-        const reg = await tx.stayRegistration.findUnique({
-          where: { bookingId: bookingUpdated.id },
-        });
-
-        if (reg) {
-          await tx.stayRegistration.update({
-            where: { id: reg.id },
-            data: { checkedOutAt: bookingUpdated.checkedOutAt ?? new Date() },
-          });
-        }
-      }
-
-      const roomStatus = getRoomStatusForBookingTransition(next);
-      if (roomStatus && booking.roomId) {
-        if (!(roomStatus === RoomStatus.disponible && booking.room?.status === RoomStatus.mantenimiento)) {
-          await tx.room.update({
-            where: { id: booking.roomId },
-            data: { status: roomStatus },
           });
         }
       }
@@ -894,47 +881,13 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         bookingId: updated.id,
         from: previousStatus,
         to: updated.status,
-        checkedInAt: updated.checkedInAt,
-        checkedOutAt: updated.checkedOutAt,
       },
     });
 
     return res.status(200).json({ success: true, data: updated });
+
   } catch (error: any) {
     console.error("Error in updateBookingStatus:", error);
-
-    if (error?.code === "BOOKING_NOT_FOUND" || error?.message === "BOOKING_NOT_FOUND") {
-      return res.status(404).json({ success: false, error: "Booking not found" });
-    }
-
-    if (error?.code === "INVALID_TRANSITION" || error?.message === "INVALID_TRANSITION") {
-      const current = error?.details?.current;
-      const next = error?.details?.next;
-      return res.status(400).json({
-        success: false,
-        code: "INVALID_TRANSITION",
-        error: current && next ? `Cannot transition from ${current} to ${next}` : "Invalid transition",
-      });
-    }
-
-    if (error?.code === "GUEST_REQUIRED_FOR_CHECKIN" || error?.message === "GUEST_REQUIRED_FOR_CHECKIN") {
-      return res.status(400).json({
-        success: false,
-        code: "GUEST_REQUIRED_FOR_CHECKIN",
-        error: "A guest is required to perform check-in.",
-      });
-    }
-
-    if (error?.code === "BOOKING_HAS_DUE" || error?.message === "BOOKING_HAS_DUE") {
-      const due = error?.details?.due;
-      return res.status(400).json({
-        success: false,
-        code: "BOOKING_HAS_DUE",
-        error: "Cannot check-out while there is an outstanding balance.",
-        details: { due },
-      });
-    }
-
     return res.status(500).json({ success: false, error: "Error updating status" });
   }
 };
