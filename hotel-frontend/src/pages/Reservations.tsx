@@ -499,301 +499,255 @@ export default function Reservations() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Reservations"
-        description="View and manage all hotel reservations."
-        actions={
-          <div className="flex gap-2">
-            <Button variant="secondary" type="button" onClick={refreshAll}>
-              Refresh
+  <div className="space-y-6">
+
+    {/* HEADER */}
+    <PageHeader
+      title="Reservations"
+      description="View and manage all hotel reservations."
+      actions={
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button
+            variant="secondary"
+            type="button"
+            onClick={refreshAll}
+            className="w-full sm:w-auto"
+          >
+            Refresh
+          </Button>
+
+          <RoleGate allowed={["admin", "receptionist"]}>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => navigate("/payments")}
+              className="w-full sm:w-auto"
+            >
+              Go to payments
             </Button>
+          </RoleGate>
 
-            <RoleGate allowed={["admin", "receptionist"]}>
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => navigate("/payments")}
-              >
-                Go to payments
-              </Button>
-            </RoleGate>
+          <Button
+            type="button"
+            onClick={() => navigate("/reservations/new")}
+            className="w-full sm:w-auto"
+          >
+            New reservation
+          </Button>
+        </div>
+      }
+    />
 
-            <Button type="button" onClick={() => navigate("/reservations/new")}>
-              New reservation
-            </Button>
-          </div>
-        }
-      />
+    {/* STATS */}
+    <Card>
+      <CardBody>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <StatBlock label="Total reservations" value={totalBookings} />
+          <StatBlock
+            label="Total reservation amount"
+            value={formatCurrency(totalRevenue)}
+          />
+          <StatBlock
+            label="Total paid"
+            value={
+              loadingPayments
+                ? "Loading..."
+                : formatCurrency(totalPaidAllBookings)
+            }
+          />
+        </div>
+      </CardBody>
+    </Card>
 
+    {/* ERROR */}
+    {error && (
       <Card>
         <CardBody>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div>
-              <p className="text-xs text-gray-500">Total reservations</p>
-              <p className="text-lg font-semibold mt-1">{totalBookings}</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500">Total reservation amount</p>
-              <p className="text-lg font-semibold mt-1">
-                {formatCurrency(totalRevenue)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500">
-                Total paid (completed payments)
-              </p>
-              <p className="text-lg font-semibold mt-1">
-                {loadingPayments
-                  ? "Loading..."
-                  : formatCurrency(totalPaidAllBookings)}
-              </p>
-            </div>
+          <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
+            {error}
           </div>
         </CardBody>
       </Card>
+    )}
 
-      {error && (
-        <Card>
-          <CardBody>
-            <div className="bg-red-50 text-red-800 px-4 py-2 rounded text-sm">
-              {error}
-            </div>
-          </CardBody>
-        </Card>
-      )}
+    {/* FILTERS */}
+    <Card>
+      <CardBody>
+        <form className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-      <Card>
-        <CardBody>
-          <form className="flex flex-wrap gap-4 items-end">
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700">
-                Search by guest
-              </label>
-              <input
-                type="text"
-                value={filterGuest}
-                onChange={(e) => setFilterGuest(e.target.value)}
-                className="mt-1 border rounded px-3 py-2 text-sm w-60"
-                placeholder="Guest name"
-              />
-            </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">
+              Search by guest
+            </label>
+            <input
+              type="text"
+              value={filterGuest}
+              onChange={(e) => setFilterGuest(e.target.value)}
+              className="mt-1 w-full border rounded px-3 py-2 text-sm"
+              placeholder="Guest name"
+            />
+          </div>
 
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700">
-                Booking status
-              </label>
-              <select
-                value={filterBookingStatus}
-                onChange={(e) => setFilterBookingStatus(e.target.value as any)}
-                className="mt-1 border rounded px-3 py-2 text-sm w-52"
-              >
-                <option value="">All</option>
-                <option value="pending">Pending</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="checked_in">Checked in</option>
-                <option value="checked_out">Checked out</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">
+              Booking status
+            </label>
+            <select
+              value={filterBookingStatus}
+              onChange={(e) => setFilterBookingStatus(e.target.value as any)}
+              className="mt-1 w-full border rounded px-3 py-2 text-sm"
+            >
+              <option value="">All</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="checked_in">Checked in</option>
+              <option value="checked_out">Checked out</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
 
-            <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700">
-                Payment status
-              </label>
-              <select
-                value={filterPaymentStatus}
-                onChange={(e) =>
-                  setFilterPaymentStatus(
-                    e.target.value as "" | "none" | "partial" | "full"
-                  )
+          <div>
+            <label className="text-sm font-medium text-gray-700">
+              Payment status
+            </label>
+            <select
+              value={filterPaymentStatus}
+              onChange={(e) =>
+                setFilterPaymentStatus(
+                  e.target.value as "" | "none" | "partial" | "full"
+                )
+              }
+              className="mt-1 w-full border rounded px-3 py-2 text-sm"
+            >
+              <option value="">All</option>
+              <option value="none">No payments</option>
+              <option value="partial">Partially paid</option>
+              <option value="full">Fully paid</option>
+            </select>
+          </div>
+
+          <div className="flex items-end">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setFilterGuest("");
+                setFilterPaymentStatus("");
+                setFilterBookingStatus("");
+              }}
+              className="w-full"
+            >
+              Clear filters
+            </Button>
+          </div>
+        </form>
+      </CardBody>
+    </Card>
+
+    {/* TABLE */}
+    <Card>
+      <CardBody>
+        <div className="overflow-x-auto">
+          <table className="min-w-[1100px] text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <Th>ID</Th>
+                <Th>Guest</Th>
+                <Th>Room</Th>
+                <Th>Dates</Th>
+                <Th align="right">Total</Th>
+                <Th align="right">Paid</Th>
+                <Th align="right">Due</Th>
+                <Th>Status</Th>
+                <Th>Payment</Th>
+                <Th>Quick actions</Th>
+                <Th align="right">Actions</Th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredBookings.map((booking) => {
+                const normalized = normalizeStatus(booking.status);
+                const money = bookingMoneyMap.get(booking.id) ?? { paid: 0, due: 0 };
+                const totalPaid = money.paid;
+                const remaining = money.due;
+
+                let paymentStatusLabel = "No payments";
+                let paymentStatusVariant: "success" | "warning" | "danger" = "danger";
+
+                if (totalPaid > 0 && remaining > 0) {
+                  paymentStatusLabel = "Partially paid";
+                  paymentStatusVariant = "warning";
                 }
-                className="mt-1 border rounded px-3 py-2 text-sm w-52"
-              >
-                <option value="">All</option>
-                <option value="none">No payments</option>
-                <option value="partial">Partially paid</option>
-                <option value="full">Fully paid</option>
-              </select>
-            </div>
+                if (remaining <= 0 && totalPaid > 0) {
+                  paymentStatusLabel = "Fully paid";
+                  paymentStatusVariant = "success";
+                }
 
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setFilterGuest("");
-                  setFilterPaymentStatus("");
-                  setFilterBookingStatus("");
-                }}
-              >
-                Clear filters
-              </Button>
-            </div>
-          </form>
-        </CardBody>
-      </Card>
+                const quickActions = normalized
+                  ? getQuickActions(normalized, remaining)
+                  : [];
 
-      <Card>
-        <CardBody>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    ID
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Guest
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Room
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Dates
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Total
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Paid
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Due
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Reservation status
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Payment status
-                  </th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-700">
-                    Quick actions
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-700">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
+                const isUpdating = updatingId === booking.id;
 
-              <tbody>
-                {filteredBookings.length === 0 && !loading && (
-                  <tr>
-                    <td
-                      colSpan={11}
-                      className="px-4 py-6 text-center text-gray-500"
-                    >
-                      {bookings.length === 0
-                        ? "No reservations found."
-                        : "No reservations match your filters."}
-                    </td>
-                  </tr>
-                )}
+                return (
+                  <tr key={booking.id} className="border-t hover:bg-slate-50 transition">
+                    <Td>{booking.id}</Td>
+                    <Td>{booking.guest?.name || "-"}</Td>
+                    <Td>
+                      {booking.room
+                        ? `Room ${booking.room.number} (floor ${booking.room.floor})`
+                        : "-"}
+                    </Td>
+                    <Td>
+                      {formatDate(booking.checkIn)} → {formatDate(booking.checkOut)}
+                    </Td>
+                    <Td align="right">{formatCurrency(booking.totalPrice ?? 0)}</Td>
+                    <Td align="right">{formatCurrency(totalPaid)}</Td>
+                    <Td align="right">{formatCurrency(remaining)}</Td>
 
-                {filteredBookings.map((booking) => {
-                  const normalized = normalizeStatus(booking.status);
+                    <Td>
+                      <Badge variant={getBookingStatusVariant(booking.status)}>
+                        {getBookingStatusLabel(booking.status)}
+                      </Badge>
+                    </Td>
 
-                  const money = bookingMoneyMap.get(booking.id) ?? {
-                    paid: 0,
-                    due: 0,
-                  };
-                  const totalPaid = money.paid;
-                  const remaining = money.due;
+                    <Td>
+                      <Badge variant={paymentStatusVariant}>
+                        {paymentStatusLabel}
+                      </Badge>
+                    </Td>
 
-                  let paymentStatusLabel = "No payments";
-                  let paymentStatusVariant: "success" | "warning" | "danger" =
-                    "danger";
+                    <Td>
+                      <div className="flex flex-wrap gap-2">
+                        {quickActions.map((a) => (
+                          <Button
+                            key={a.next}
+                            type="button"
+                            variant={a.variant ?? "secondary"}
+                            className="text-xs px-3 py-1"
+                            disabled={isUpdating || a.disabled}
+                            onClick={() =>
+                              requestStatusChange(booking.id, a.next)
+                            }
+                          >
+                            {isUpdating ? "..." : a.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </Td>
 
-                  if (totalPaid <= 0) {
-                    paymentStatusLabel = "No payments";
-                    paymentStatusVariant = "danger";
-                  } else if (remaining > 0) {
-                    paymentStatusLabel = "Partially paid";
-                    paymentStatusVariant = "warning";
-                  } else {
-                    paymentStatusLabel = "Fully paid";
-                    paymentStatusVariant = "success";
-                  }
-
-                  const quickActions = normalized
-                    ? getQuickActions(normalized, remaining)
-                    : [];
-
-                  const isUpdating = updatingId === booking.id;
-
-                  return (
-                    <tr key={booking.id} className="border-t last:border-b">
-                      <td className="px-4 py-2 align-top">{booking.id}</td>
-                      <td className="px-4 py-2 align-top">
-                        {booking.guest?.name || "-"}
-                      </td>
-                      <td className="px-4 py-2 align-top">
-                        {booking.room
-                          ? `Room ${booking.room.number} (floor ${booking.room.floor})`
-                          : "-"}
-                      </td>
-                      <td className="px-4 py-2 align-top">
-                        {formatDate(booking.checkIn)} →{" "}
-                        {formatDate(booking.checkOut)}
-                      </td>
-                      <td className="px-4 py-2 align-top text-right">
-                        {formatCurrency(booking.totalPrice ?? 0)}
-                      </td>
-                      <td className="px-4 py-2 align-top text-right">
-                        {formatCurrency(totalPaid)}
-                      </td>
-                      <td className="px-4 py-2 align-top text-right">
-                        {formatCurrency(remaining)}
-                      </td>
-                      <td className="px-4 py-2 align-top">
-                        <Badge
-                          variant={getBookingStatusVariant(booking.status)}
-                        >
-                          {getBookingStatusLabel(booking.status)}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2 align-top">
-                        <Badge variant={paymentStatusVariant}>
-                          {paymentStatusLabel}
-                        </Badge>
-                      </td>
-
-                      <td className="px-4 py-2 align-top">
-                        {!normalized ? (
-                          <span className="text-xs text-gray-500">-</span>
-                        ) : quickActions.length === 0 ? (
-                          <span className="text-xs text-gray-500">
-                            No actions
-                          </span>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {quickActions.map((a) => (
-                              <Button
-                                key={a.next}
-                                type="button"
-                                variant={a.variant ?? "secondary"}
-                                className="text-xs px-3 py-1"
-                                disabled={isUpdating || a.disabled}
-                                title={a.disabled ? a.disabledReason : undefined}
-                                onClick={() =>
-                                  requestStatusChange(booking.id, a.next)
-                                }
-                              >
-                                {isUpdating ? "..." : a.label}
-                              </Button>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-2 align-top text-right space-x-2">
+                    <Td align="right">
+                      <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           type="button"
                           variant="ghost"
                           className="text-xs px-3 py-1"
-                          onClick={() => navigate(`/reservations/${booking.id}`)}
+                          onClick={() =>
+                            navigate(`/reservations/${booking.id}`)
+                          }
                         >
-                          View details
+                          View
                         </Button>
 
                         <RoleGate allowed={["admin", "receptionist"]}>
@@ -805,50 +759,90 @@ export default function Reservations() {
                               navigate(`/payments?bookingId=${booking.id}`)
                             }
                           >
-                            Manage payments
+                            Payments
                           </Button>
                         </RoleGate>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {loading && (
-                  <tr>
-                    <td
-                      colSpan={11}
-                      className="px-4 py-4 text-center text-gray-500"
-                    >
-                      Loading...
-                    </td>
+                      </div>
+                    </Td>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardBody>
-      </Card>
+                );
+              })}
 
-      {/*  Confirmation modal (replaces window.confirm) */}
-      <ConfirmModal
-        open={!!confirm}
-        title={confirm?.title ?? ""}
-        description={confirm?.description}
-        confirmText="Accept"
-        cancelText="Cancel"
-        loading={!!confirm && updatingId === confirm.bookingId}
-        onCancel={() => setConfirm(null)}
-        onConfirm={async () => {
-          if (!confirm) return;
+              {loading && (
+                <tr>
+                  <td colSpan={11} className="text-center py-6 text-gray-500">
+                    Loading...
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardBody>
+    </Card>
 
-          const { bookingId, next } = confirm;
-
-          // Here I close the modal first for a snappy UX.
-          setConfirm(null);
-
-          await updateStatus(bookingId, next);
-        }}
-      />
+    <ConfirmModal
+      open={!!confirm}
+      title={confirm?.title ?? ""}
+      description={confirm?.description}
+      confirmText="Accept"
+      cancelText="Cancel"
+      loading={!!confirm && updatingId === confirm.bookingId}
+      onCancel={() => setConfirm(null)}
+      onConfirm={async () => {
+        if (!confirm) return;
+        const { bookingId, next } = confirm;
+        setConfirm(null);
+        await updateStatus(bookingId, next);
+      }}
+    />
+  </div>
+);
+function StatBlock({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="bg-slate-50 border rounded-lg p-4">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="text-lg font-semibold mt-1 text-slate-800">
+        {value}
+      </p>
     </div>
+  );
+}
+};
+function Th({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  const alignClass = align === "right" ? "text-right" : "text-left";
+
+  return (
+    <th className={`px-4 py-2 font-medium text-gray-700 ${alignClass}`}>
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  const alignClass = align === "right" ? "text-right" : "text-left";
+
+  return (
+    <td className={`px-4 py-2 align-top ${alignClass}`}>
+      {children}
+    </td>
   );
 }
