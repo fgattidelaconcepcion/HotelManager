@@ -1,3 +1,4 @@
+
 # Node dependencies
 node_modules/
 
@@ -6,14 +7,24 @@ dist/
 
 # Environment variables (do NOT upload secrets)
 .env
+.env.local
+.env.*.local
 
 # Prisma generated and database files
 prisma/dev.db
 prisma/dev.db-journal
 /generated/prisma/
 
-# Logs
+# Logs and databases
 *.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # TypeScript build info
 tsconfig.tsbuildinfo
+
+# OS metadata
+.DS_Store
+Thumbs.db
