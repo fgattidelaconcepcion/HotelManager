@@ -1,4 +1,4 @@
-Hotel Management System
+Hotel Management System     Live demo: https://hotelsmanagment.netlify.app/login
 
 A professional fullstack hotel management system designed for small to medium hotels.
 
